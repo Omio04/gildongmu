@@ -67,6 +67,7 @@ class MainActivity : AppCompatActivity() {
     private val io = java.util.concurrent.Executors.newSingleThreadExecutor()
     private val pollIo = java.util.concurrent.Executors.newSingleThreadExecutor()   // polling never waits behind a slow send
     @Volatile private var pollBusy = false
+    private val pollTick = Runnable { pollLoop() }   // one named runnable, so a pause/resume can never leave two loops running
     private var lastInboxId = 0
     private var polling = false
     private var inboxPrimed = false
@@ -205,6 +206,14 @@ class MainActivity : AppCompatActivity() {
         (intent.getStringExtra("server") ?: intent.data?.getQueryParameter("url"))
             ?.let { prefs.edit().putString("server", it).apply() }
         return prefs.getString("server", null) ?: "http://10.0.2.2:8080"
+    }
+
+    // while another app is in front there is nobody to show the road to: stop asking the server
+    override fun onPause() { polling = false; super.onPause() }
+
+    override fun onResume() {
+        super.onResume()
+        if (!polling && !isDestroyed) { polling = true; ui.removeCallbacks(pollTick); pollLoop() }
     }
 
     override fun onDestroy() {
@@ -519,7 +528,7 @@ class MainActivity : AppCompatActivity() {
     private fun pollLoop() {
         if (!polling) return
         val n = tick++
-        if (pollBusy) { ui.postDelayed({ pollLoop() }, 500); return }   // the last round is still running: don't pile up
+        if (pollBusy) { ui.postDelayed(pollTick, 500); return }   // the last round is still running: don't pile up
         pollBusy = true
         pollIo.execute {
             try {
@@ -542,7 +551,7 @@ class MainActivity : AppCompatActivity() {
                 ui.post { setOnline(false) }   // the screen keeps working with what it has, and says so
             } finally { pollBusy = false }
         }
-        ui.postDelayed({ pollLoop() }, if (online) 1500 else 4000)   // slower while offline, back to normal as soon as it answers
+        ui.postDelayed(pollTick, if (online) 2000 else 4000)   // slower while offline, back to normal as soon as it answers
     }
 
     private fun setOnline(ok: Boolean) {
@@ -552,6 +561,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun onNeighbors(near: List<Neighbor>) {
+        if (near == neighbors) return   // nothing changed: no redraw, no layout
         neighbors = near
         road.neighbors = near
         crowdText.text = "함께 있는 이웃  사람 ${near.count { it.live }}명 · 차 ${near.size}대"

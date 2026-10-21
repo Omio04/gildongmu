@@ -1,6 +1,7 @@
 package com.gildongmu.app
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
@@ -30,18 +31,18 @@ class RoadView(
 ) : View(context) {
 
     var neighbors: List<Neighbor> = neighbors
-        set(v) { field = v; invalidate() }
+        set(v) { field = v; dirty() }
 
     /** The bubble over our own car. */
     var myMood: String? = null
-        set(v) { if (field != v) { field = v; invalidate() } }
+        set(v) { if (field != v) { field = v; dirty() } }
 
     /** Tapping a car picks it (only while [pickEnabled]). */
     var onPick: ((Neighbor) -> Unit)? = null
     var pickEnabled = false
         set(v) { field = v; invalidate() }
     var selectedId: String? = null
-        set(v) { field = v; invalidate() }
+        set(v) { field = v; dirty() }
 
     private val d = resources.displayMetrics.density
     private val road = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -81,11 +82,27 @@ class RoadView(
     private val animationsOn: Boolean
         get() = android.provider.Settings.Global.getFloat(context.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) > 0f
 
+    // The road is drawn in two cached pieces so a frame costs almost nothing on an old head unit:
+    // the background (gradient, clip) is made once per size, and the cars/tags/bubbles are painted into a
+    // bitmap that is only redone when something about them changes. Per frame, only the lane marks move.
+    private var clip: Path? = null
+    private var fg: Bitmap? = null
+    private var fgDirty = true
+
+    private fun dirty() { fgDirty = true; invalidate() }
+
+    override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
+        clip = Path().apply { addRoundRect(RectF(0f, 0f, w.toFloat(), h.toFloat()), 28 * d, 28 * d, Path.Direction.CW) }
+        road.shader = LinearGradient(0f, 0f, 0f, h.toFloat(), theme.roadTop, theme.roadBottom, Shader.TileMode.CLAMP)
+        fg?.recycle(); fg = null; fgDirty = true
+    }
+
+    override fun onDetachedFromWindow() { fg?.recycle(); fg = null; fgDirty = true; super.onDetachedFromWindow() }
+
     override fun onDraw(c: Canvas) {
         val w = width.toFloat(); val h = height.toFloat()
-        val clip = Path().apply { addRoundRect(RectF(0f, 0f, w, h), 28 * d, 28 * d, Path.Direction.CW) }
-        c.save(); c.clipPath(clip)
-        road.shader = LinearGradient(0f, 0f, 0f, h, theme.roadTop, theme.roadBottom, Shader.TileMode.CLAMP)
+        if (w <= 0f || h <= 0f) return
+        c.save(); c.clipPath(clip ?: return)
         c.drawRect(0f, 0f, w, h, road)
 
         val roadW = w * 0.86f
@@ -114,6 +131,22 @@ class RoadView(
             }
         }
 
+        c.drawBitmap(foreground(w.toInt(), h.toInt(), left, laneW), 0f, 0f, null)
+        c.restore()
+        if (running) postInvalidateDelayed(33)   // about 30 frames a second is plenty for slow lane marks
+    }
+
+    /** Cars, name tags and bubbles on a transparent layer, redone only when [fgDirty]. */
+    private fun foreground(wi: Int, hi: Int, left: Float, laneW: Float): Bitmap {
+        fg?.let { if (!fgDirty) return it }
+        val bmp = fg ?: Bitmap.createBitmap(wi, hi, Bitmap.Config.ARGB_8888).also { fg = it }
+        bmp.eraseColor(Color.TRANSPARENT)
+        drawCars(Canvas(bmp), hi.toFloat(), left, laneW)
+        fgDirty = false
+        return bmp
+    }
+
+    private fun drawCars(c: Canvas, h: Float, left: Float, laneW: Float) {
         fun laneX(l: Int) = left + laneW * (l + 0.5f)
         val cw = laneW * 0.52f; val ch = cw * 1.9f
 
@@ -142,8 +175,6 @@ class RoadView(
         // speech bubbles last, so no name tag covers them
         bubbles.forEach { (x, ys, text) -> bubble(c, x, ys.first, ys.second, text) }
         myMood?.let { bubble(c, mx, my - ch / 2f - 8 * d, my + ch / 2f + 6 * d, it) }
-        c.restore()
-        if (running) postInvalidateOnAnimation()
     }
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
