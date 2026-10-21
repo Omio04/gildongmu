@@ -3,7 +3,8 @@
 
 Car app (JSON):
     GET  /api/nearby?vid=me
-    POST /api/send    {"preset" | "spoken","to","arg","speed_kmh","gear","voice"}   one-touch or spoken question;
+    POST /api/send    {"preset" | "spoken","to","arg","gear","voice","restricted"}   one-touch or spoken question;
+                      "restricted" = the vehicle forbids touch (all UX restrictions set): only "voice" gets through;
                       "to" = one car, left out = everyone around (up to 3 answers, all visible to the neighbours)
     POST /api/report  {"msg_id","reason"}                      report a neighbour: blocked, answers no longer shown
     GET  /api/inbox?vid=me&after=<id>
@@ -393,9 +394,11 @@ class Handler(BaseHTTPRequestHandler):
                 print("voice question from the car:", "understood" if preset in APP_PRESETS else "not understood", flush=True)
             if preset not in APP_PRESETS:
                 return self._json(422 if data.get("spoken") else 400, {"error": "unknown preset"})
-            # asking by voice needs no hands and no eyes, so it stays available while driving
-            speed = 0.0 if data.get("voice") else float(data.get("speed_kmh", 0))
-            db.execute("UPDATE vehicles SET speed_kmh=?, gear=? WHERE id=?", (speed, data.get("gear", "D"), ME))
+            # The vehicle decides. When it restricts everything ("restricted"), only a spoken question gets through;
+            # otherwise a one-tap preset is fine at any speed (there is no typing, only big one-tap choices).
+            if data.get("restricted") and not data.get("voice"):
+                return self._json(403, {"error": "차량이 지금은 터치를 제한하고 있어요. 말로 물어보세요"})
+            db.execute("UPDATE vehicles SET speed_kmh=?, gear=? WHERE id=?", (0.0, data.get("gear", "D"), ME))
             db.commit()
             near = core.nearby(db, ME)
             if not near:

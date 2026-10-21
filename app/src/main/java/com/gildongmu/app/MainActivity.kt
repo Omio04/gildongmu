@@ -439,6 +439,9 @@ class MainActivity : AppCompatActivity() {
         }
         style(chipAll, chipAllText, !directMode)
         style(chipOne, chipOneText, directMode)
+        val canPick = info.state != DriveState.MOVING   // one car = aiming at a small target: only when not moving
+        chipOne.isEnabled = canPick
+        chipOne.alpha = if (canPick) 1f else 0.4f
         road.pickEnabled = directMode && info.state != DriveState.MOVING
     }
 
@@ -528,7 +531,7 @@ class MainActivity : AppCompatActivity() {
         val becameMoving = newInfo.state == DriveState.MOVING && info.state != DriveState.MOVING
         info = newInfo
         render()
-        if (becameMoving) speak("달리는 중이에요. 질문은 말로 해 주세요. 답은 음성으로 들려드려요")
+        if (becameMoving) speak(if (info.canSend) "달리는 중이에요. 안전하게 운전하세요. 질문은 말로도 할 수 있어요" else "달리는 중이에요. 질문은 말로 해 주세요. 답은 음성으로 들려드려요")
     }
 
     private fun render() {
@@ -543,11 +546,12 @@ class MainActivity : AppCompatActivity() {
         val moving = info.state == DriveState.MOVING
         road.moving = moving
 
-        // moving: the big voice screen instead of the buttons
-        stoppedArea.visibility = if (moving) View.GONE else View.VISIBLE
-        voiceBar.visibility = if (moving) View.GONE else View.VISIBLE
-        voiceHero.visibility = if (moving) View.VISIBLE else View.GONE
-        if (moving) { directMode = false; directTarget = null; road.selectedId = null }
+        // the vehicle decides: only when it restricts everything do the buttons give way to the big voice screen
+        val locked = !info.canSend
+        stoppedArea.visibility = if (locked) View.GONE else View.VISIBLE
+        voiceBar.visibility = if (locked) View.GONE else View.VISIBLE
+        voiceHero.visibility = if (locked) View.VISIBLE else View.GONE
+        if (moving) { directMode = false; directTarget = null; road.selectedId = null }   // picking a small car needs too much looking
         updateScope()
 
         val enabled = info.canSend
@@ -569,7 +573,7 @@ class MainActivity : AppCompatActivity() {
         startWaiting(if (to != null) "${directTarget!!.nickname}에게 물어보는 중" else "근처 이웃에게 물어보는 중")
         val speed = info.speedKmh ?: 0f
         io.execute {
-            val res = try { api.send(p.code, if (p.code == "HELLO") destName else null, speed, gearCode(), to) } catch (e: Exception) { null }
+            val res = try { api.send(p.code, if (p.code == "HELLO") destName else null, speed, gearCode(), to, info.fullyRestricted) } catch (e: Exception) { null }
             deliver(res, p.code)
         }
     }

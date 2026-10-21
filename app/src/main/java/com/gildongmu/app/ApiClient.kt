@@ -78,8 +78,8 @@ class ApiClient(private val base: String = "http://10.0.2.2:8080") {
     }
 
     /** [to] = one car; null = everyone around. */
-    fun send(preset: String, arg: String?, speedKmh: Float, gear: String, to: String? = null): SendResult {
-        val body = JSONObject().put("preset", preset).put("speed_kmh", speedKmh.toDouble()).put("gear", gear)
+    fun send(preset: String, arg: String?, speedKmh: Float, gear: String, to: String? = null, restricted: Boolean = false): SendResult {
+        val body = JSONObject().put("preset", preset).put("speed_kmh", speedKmh.toDouble()).put("gear", gear).put("restricted", restricted)
         if (arg != null) body.put("arg", arg)
         if (to != null) body.put("to", to)
         return post("/api/send", body)

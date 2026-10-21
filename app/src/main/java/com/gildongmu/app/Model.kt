@@ -29,8 +29,19 @@ data class DriveInfo(
     val restrictions: Int,
     val speedKmh: Float?,
 ) {
-    /** Preset buttons are locked only while the car is moving. */
-    val canSend: Boolean get() = state != DriveState.MOVING
+    /**
+     * The vehicle's own verdict: every restriction flag set (0x1FF) means the platform allows no interaction at all.
+     * Anything less (e.g. 0x50 = no setup flows, no video) leaves one-tap presets available, at any speed:
+     * there is no typing here, only big one-tap choices, which is what the Pleos guide asks for.
+     */
+    val fullyRestricted: Boolean get() = restrictions and FULLY_RESTRICTED == FULLY_RESTRICTED
+
+    /** Touching the quick questions is allowed unless the vehicle restricts everything. */
+    val canSend: Boolean get() = !fullyRestricted
+
+    companion object {
+        const val FULLY_RESTRICTED = 0x1FF   // CarUxRestrictions.UX_RESTRICTIONS_FULLY_RESTRICTED
+    }
 }
 
 /**
