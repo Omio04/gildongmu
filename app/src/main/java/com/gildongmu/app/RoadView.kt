@@ -17,7 +17,8 @@ import android.view.View
  * Top-down road with our car and the neighbours around it.
  * Only relative lane/distance is drawn - no coordinates are ever shown.
  * The lane marks and the LIVE mark are small squares, a nod to Hyundai's pixel lamp motif.
- * Nothing on this view moves by itself: the Pleos guide asks to keep automatic animation to a minimum while driving.
+ * Only the lane marks scroll, at a pace that follows the real speed (still when parked, a slow crawl in a jam),
+ * so the road feels alive without anything else moving. The animation stops when the view is hidden or the system turns animations off.
  * A tap on a car picks it (when [pickEnabled]); a car can wear a speech bubble with one of the fixed feelings.
  */
 class RoadView(
@@ -68,8 +69,17 @@ class RoadView(
     private val slots = listOf(0 to 0.54f, 2 to 0.36f, 2 to 0.68f, 1 to 0.30f, 0 to 0.80f, 1 to 0.55f)   // clear of the chips on top
     private val hits = mutableListOf<Pair<RectF, Neighbor>>()
 
-    /** Kept so the screen can tell the road about the driving state; the road itself stays still. */
+    /** Kept so the screen can tell the road about the driving state. */
     var moving: Boolean = false
+
+    /** Vehicle speed; the lane marks scroll in proportion (0 = standing still). */
+    var speedKmh: Float = 0f
+        set(v) { field = v; if (v > 0f) { lastFrame = 0L; invalidate() } }
+
+    private var scroll = 0f
+    private var lastFrame = 0L
+    private val animationsOn: Boolean
+        get() = android.provider.Settings.Global.getFloat(context.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) > 0f
 
     override fun onDraw(c: Canvas) {
         val w = width.toFloat(); val h = height.toFloat()
@@ -86,9 +96,15 @@ class RoadView(
         // lane marks: columns of small squares
         val period = 64 * d
         val sq = 5 * d
+        val now = android.os.SystemClock.uptimeMillis()
+        val running = speedKmh > 0f && animationsOn && isShown
+        if (running) {
+            if (lastFrame != 0L) scroll = (scroll + (now - lastFrame) / 1000f * (14f + speedKmh.coerceAtMost(80f) * 1.4f) * d) % period
+            lastFrame = now
+        } else lastFrame = 0L
         for (i in 1..2) {
             val x = left + laneW * i
-            var y = -period
+            var y = -period + scroll
             while (y < h) {
                 for (k in 0 until 4) {
                     val top = y + k * (sq + 3.5f * d)
@@ -127,6 +143,7 @@ class RoadView(
         bubbles.forEach { (x, ys, text) -> bubble(c, x, ys.first, ys.second, text) }
         myMood?.let { bubble(c, mx, my - ch / 2f - 8 * d, my + ch / 2f + 6 * d, it) }
         c.restore()
+        if (running) postInvalidateOnAnimation()
     }
 
     override fun onTouchEvent(e: MotionEvent): Boolean {

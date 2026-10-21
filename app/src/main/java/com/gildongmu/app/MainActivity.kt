@@ -65,6 +65,8 @@ class MainActivity : AppCompatActivity() {
     // backend (server/app_server.py); falls back to local demo data if unreachable
     private lateinit var api: ApiClient
     private val io = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private val pollIo = java.util.concurrent.Executors.newSingleThreadExecutor()   // polling never waits behind a slow send
+    @Volatile private var pollBusy = false
     private var lastInboxId = 0
     private var polling = false
     private var inboxPrimed = false
@@ -207,6 +209,8 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         polling = false
+        ui.removeCallbacksAndMessages(null)
+        pollIo.shutdown(); io.shutdown()
         navi?.stop()
         monitor.stop()
         voice?.stop()
@@ -515,7 +519,9 @@ class MainActivity : AppCompatActivity() {
     private fun pollLoop() {
         if (!polling) return
         val n = tick++
-        io.execute {
+        if (pollBusy) { ui.postDelayed({ pollLoop() }, 500); return }   // the last round is still running: don't pile up
+        pollBusy = true
+        pollIo.execute {
             try {
                 val near = api.nearby()
                 val inbound = api.inbox(lastInboxId)
@@ -534,9 +540,9 @@ class MainActivity : AppCompatActivity() {
                 }
             } catch (e: Exception) {
                 ui.post { setOnline(false) }   // the screen keeps working with what it has, and says so
-            }
+            } finally { pollBusy = false }
         }
-        ui.postDelayed({ pollLoop() }, 1500)
+        ui.postDelayed({ pollLoop() }, if (online) 1500 else 4000)   // slower while offline, back to normal as soon as it answers
     }
 
     private fun setOnline(ok: Boolean) {
@@ -625,6 +631,7 @@ class MainActivity : AppCompatActivity() {
         renderState()
         val moving = info.state == DriveState.MOVING
         road.moving = moving
+        road.speedKmh = if (info.state == DriveState.PARKED) 0f else (info.speedKmh ?: 0f).coerceAtLeast(if (jamSince != null) 4f else 0f)
 
         // only if the vehicle forbids touching altogether do the buttons give way to the big voice screen
         val locked = !info.canSend
