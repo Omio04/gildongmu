@@ -75,6 +75,9 @@
   .mic.on { background: var(--accent); animation: blink 1.2s infinite; }
   .ghost { width: 100%; margin-top: 10px; padding: 14px; border-radius: 16px; background: transparent; color: var(--muted); font-size: 16px; font-weight: 700; border: 1.5px solid var(--line); }
   .hint { margin-top: 10px; font-size: 13px; color: var(--muted); text-align: center; line-height: 1.5; }
+  .moods { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .moods button { padding: 10px 14px; border-radius: 999px; background: var(--bg); color: var(--ink); font-size: 15px; font-weight: 700; border: 1.5px solid var(--line); }
+  .moods button.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
   .sent { text-align: center; padding: 26px 18px; }
   .sent .ok { width: 54px; height: 54px; margin: 0 auto 12px; border-radius: 16px; background: #e7f8ef; color: var(--green); display: grid; place-items: center; font-size: 30px; }
   .blocked h2 { color: var(--red); }
@@ -115,6 +118,12 @@
       <div class="avatar" id="av">길</div>
       <div><div class="name" id="myName"></div><span class="badge" id="myTitle"></span><br><button class="link" id="edit">프로필 바꾸기</button></div>
       <div class="stats">도와줌 <b id="helped">0</b><br>고마워요 <b id="thanks">0</b></div>
+    </div>
+
+    <div class="card">
+      <h2 style="font-size:17px">지금 내 한마디</h2>
+      <p>고르면 근처 차 화면에 말풍선으로 잠깐 떠요. 다시 누르면 지워져요.</p>
+      <div class="moods" id="moods"></div>
     </div>
 
     <div class="card wait" id="wait">
@@ -185,7 +194,7 @@
     Array.prototype.forEach.call($('sw').children, function (b) { b.classList.toggle('on', b.dataset.c === profile.color); });
   }
   function buildForm(o) {
-    opts = o;
+    opts = o; if (o.moods) buildMoods(o.moods);
     var saved = JSON.parse(localStorage.getItem('gdm2') || 'null');
     if (saved) profile = Object.assign(profile, saved);
     fill($('adj'), o.adjectives, profile.adjective); fill($('ani'), o.animals, profile.animal); fill($('dest'), o.destinations, profile.dest);
@@ -197,6 +206,25 @@
     });
     ['adj', 'ani', 'dest', 'shModel', 'shDest', 'shTitle'].forEach(function (id) { $(id).onchange = preview; });
     preview();
+  }
+
+  // ---------------- "한마디": one tap, from a fixed list
+  var curMood = null;
+  function buildMoods(list) {
+    $('moods').innerHTML = '';
+    list.forEach(function (m) {
+      var b = document.createElement('button'); b.textContent = m.text;
+      b.onclick = function () {
+        var next = curMood === m.id ? null : m.id;
+        api('POST', '/api/n/mood', { vid: vid, mood: next }).then(function () {
+          curMood = next;
+          Array.prototype.forEach.call($('moods').children, function (x) { x.classList.remove('on'); });
+          if (next) b.classList.add('on');
+          toast(next ? '말풍선을 띄웠어요' : '말풍선을 지웠어요');
+        });
+      };
+      $('moods').appendChild(b);
+    });
   }
 
   // ---------------- polling

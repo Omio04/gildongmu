@@ -11,6 +11,9 @@ Car app (JSON):
     POST /api/thanks  {"msg_id"}                               "고마워요" to whoever answered
     GET  /api/ahead?vid=me                                     next rest area + liked restaurant
     GET  /api/situation                                        what neighbours reported about the road ahead
+    POST /api/inform  {"kind"}                                 "알리기": tell the road what you see (no question needed)
+    GET/POST /api/mood {"mood"}                                "한마디": a fixed feeling shown as a bubble over our car
+    POST /api/n/mood {"vid","mood"}                            the same, from a neighbour's phone
     POST /api/trip    {"dest"}
     GET  /api/demo/event?kind=accident|rest                    a neighbour speaks up unprompted (demo)
 Neighbour phones (open http://<this PC>:8080/neighbor):
@@ -60,6 +63,8 @@ lock = threading.RLock()  # one shared connection, used from several handler thr
 db = None
 room = live.LiveRoom()
 reports = live.Reports()
+car_mood = {"key": None, "at": 0.0}   # the bubble over our own car
+SIM_MOODS = ["home", "sleepy", "cheer", "hungry", "escape"]
 
 
 def _open():
@@ -280,6 +285,10 @@ class Handler(BaseHTTPRequestHandler):
                         pl = room.players[n["id"]]
                         n["color"] = pl.color
                         n["title"] = live.title_for(pl.helped) if pl.show_title else ""
+                        n["mood"] = room.mood_of(n["id"])
+                    else:
+                        k = (int(time.time() // 25) + sum(map(ord, n["id"]))) % (len(SIM_MOODS) + 3)
+                        n["mood"] = live.MOODS[SIM_MOODS[k]] if k < len(SIM_MOODS) else None
                 out.sort(key=lambda n: not n["live"])  # real neighbours first (stable: keeps distance order)
                 return self._json(200, out)
             if u.path == "/api/inbox":
@@ -292,6 +301,9 @@ class Handler(BaseHTTPRequestHandler):
                     out.append({"id": r["id"], "from": _name(r["from_id"]), "text": text, "coupon": coupon,
                                 "auto": r["auto"] == 1, "human": r["auto"] == 2})
                 return self._json(200, out)
+            if u.path == "/api/mood":
+                key = car_mood["key"] if time.time() - car_mood["at"] <= live.MOOD_SECONDS else None
+                return self._json(200, {"mood": live.MOODS.get(key)})
             if u.path == "/api/ahead":
                 return self._json(200, ahead_info())
             if u.path == "/api/situation":
@@ -299,7 +311,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, reports.summary(info[0]["name"] if info else None))
             if u.path == "/api/n/options":
                 return self._json(200, {"adjectives": live.ADJECTIVES, "animals": live.ANIMALS,
-                                        "colors": live.COLORS, "destinations": live.DESTINATIONS})
+                                        "colors": live.COLORS, "destinations": live.DESTINATIONS,
+                                        "moods": [{"id": k, "text": v} for k, v in live.MOODS.items()]})
             if u.path == "/api/n/poll":
                 try:
                     return self._json(200, room.poll(q.get("vid", "")))
@@ -357,6 +370,27 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(409, {"error": str(e)})
                 _post(data["vid"], ME, compose_answer(preset, option), auto=2)
                 _report(preset, option, data["vid"])
+                return self._json(200, {"ok": True})
+
+            if u.path == "/api/inform":   # the driver tells the road what they see, without being asked
+                kind = data.get("kind")
+                if kind not in live.AHEAD_TEXT:
+                    return self._json(400, {"error": "unknown report"})
+                reports.add("ahead", kind, ME)
+                return self._json(200, {"ok": True})
+
+            if u.path == "/api/mood":
+                key = data.get("mood")
+                if key is not None and key not in live.MOODS:
+                    return self._json(400, {"error": "unknown mood"})
+                car_mood["key"], car_mood["at"] = key, time.time()
+                return self._json(200, {"ok": True})
+
+            if u.path == "/api/n/mood":
+                try:
+                    room.set_mood(data.get("vid", ""), data.get("mood"))
+                except live.LiveError as e:
+                    return self._json(409, {"error": str(e)})
                 return self._json(200, {"ok": True})
 
             if u.path == "/api/n/skip":

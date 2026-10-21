@@ -1,6 +1,5 @@
 package com.gildongmu.app
 
-import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
@@ -13,13 +12,13 @@ import android.graphics.Shader
 import android.graphics.Typeface
 import android.view.MotionEvent
 import android.view.View
-import android.view.animation.LinearInterpolator
 
 /**
  * Top-down road with our car and the neighbours around it.
  * Only relative lane/distance is drawn - no coordinates are ever shown.
  * The lane marks and the LIVE mark are small squares, a nod to Hyundai's pixel lamp motif.
- * In "pick" mode a tap on a car chooses it as the one car to ask.
+ * Nothing on this view moves by itself: the Pleos guide asks to keep automatic animation to a minimum while driving.
+ * A tap on a car picks it (when [pickEnabled]); a car can wear a speech bubble with one of the fixed feelings.
  */
 class RoadView(
     context: Context,
@@ -31,6 +30,10 @@ class RoadView(
 
     var neighbors: List<Neighbor> = neighbors
         set(v) { field = v; invalidate() }
+
+    /** The bubble over our own car. */
+    var myMood: String? = null
+        set(v) { if (field != v) { field = v; invalidate() } }
 
     /** Tapping a car picks it (only while [pickEnabled]). */
     var onPick: ((Neighbor) -> Unit)? = null
@@ -53,6 +56,9 @@ class RoadView(
     private val chip = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = theme.surface }
     private val chipSelected = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = theme.accent }
     private val chipBorder = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1f * d; color = theme.border }
+    private val bubbleFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = theme.surface }
+    private val bubbleEdge = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1.5f * d; color = theme.accent }
+    private val bubbleText = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 12 * d; typeface = bold; color = theme.ink }
     private val label = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 13 * d; typeface = bold; color = theme.ink }
     private val sub = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 11 * d; typeface = regular; color = theme.muted }
     private val star = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#F5A524") }
@@ -60,23 +66,10 @@ class RoadView(
 
     // lane (0..2) and vertical position (0 = far ahead, 1 = behind us), in the order of the neighbour list
     private val slots = listOf(0 to 0.54f, 2 to 0.36f, 2 to 0.68f, 1 to 0.30f, 0 to 0.80f, 1 to 0.55f)   // clear of the chips on top
-    private var scroll = 0f
     private val hits = mutableListOf<Pair<RectF, Neighbor>>()
 
-    private val anim = ValueAnimator.ofFloat(0f, 1f).apply {
-        duration = 900
-        repeatCount = ValueAnimator.INFINITE
-        interpolator = LinearInterpolator()
-        addUpdateListener { scroll = it.animatedValue as Float; invalidate() }
-    }
-
+    /** Kept so the screen can tell the road about the driving state; the road itself stays still. */
     var moving: Boolean = false
-        set(v) {
-            field = v
-            if (v) { if (!anim.isStarted) anim.start() } else { anim.cancel(); scroll = 0f; invalidate() }
-        }
-
-    override fun onDetachedFromWindow() { anim.cancel(); super.onDetachedFromWindow() }
 
     override fun onDraw(c: Canvas) {
         val w = width.toFloat(); val h = height.toFloat()
@@ -90,12 +83,12 @@ class RoadView(
         val laneW = roadW / 3f
         c.drawLine(left, 0f, left, h, edge)
         c.drawLine(left + roadW, 0f, left + roadW, h, edge)
-        // lane marks: columns of small squares that scroll while the car moves
+        // lane marks: columns of small squares
         val period = 64 * d
         val sq = 5 * d
         for (i in 1..2) {
             val x = left + laneW * i
-            var y = -period + scroll * period
+            var y = -period
             while (y < h) {
                 for (k in 0 until 4) {
                     val top = y + k * (sq + 3.5f * d)
@@ -109,6 +102,7 @@ class RoadView(
         val cw = laneW * 0.52f; val ch = cw * 1.9f
 
         hits.clear()
+        val bubbles = mutableListOf<Triple<Float, Pair<Float, Float>, String>>()   // x, (bottom, below), text
         neighbors.take(slots.size).forEachIndexed { i, n ->
             val (lane, yf) = slots[i]
             val cx = laneX(lane); val cy = h * yf
@@ -117,7 +111,11 @@ class RoadView(
             if (selected) {
                 c.drawRoundRect(RectF(cx - cw / 2 - 5 * d, cy - ch / 2 - 5 * d, cx + cw / 2 + 5 * d, cy + ch / 2 + 5 * d), cw * 0.38f, cw * 0.38f, ring)
             }
-            tag(c, cx, cy - ch / 2f - 6 * d, n, selected)
+            val tagTop = tag(c, cx, cy - ch / 2f - 6 * d, n, selected)
+            val mood = n.mood
+            if (mood != null && bubbles.size < 2) {   // two at a time, so the road stays readable
+                bubbles += Triple(cx, (tagTop - 4 * d) to (cy + ch / 2f + 6 * d), mood)
+            }
             hits += RectF(cx - cw / 2 - 10 * d, cy - ch / 2 - 44 * d, cx + cw / 2 + 10 * d, cy + ch / 2 + 10 * d) to n
         }
         // our car: a soft glow underneath
@@ -125,6 +123,9 @@ class RoadView(
         glowP.shader = RadialGradient(mx, my, ch * 0.95f, theme.glow, Color.TRANSPARENT, Shader.TileMode.CLAMP)
         c.drawCircle(mx, my, ch * 0.95f, glowP)
         car(c, mx, my, cw, ch, theme.carMe)
+        // speech bubbles last, so no name tag covers them
+        bubbles.forEach { (x, ys, text) -> bubble(c, x, ys.first, ys.second, text) }
+        myMood?.let { bubble(c, mx, my - ch / 2f - 8 * d, my + ch / 2f + 6 * d, it) }
         c.restore()
     }
 
@@ -139,6 +140,28 @@ class RoadView(
     }
 
     override fun performClick(): Boolean = super.performClick()
+
+    /** A speech bubble above [bottom] (or below the car, at [below], when there is no room above). */
+    private fun bubble(c: Canvas, cx: Float, bottom: Float, below: Float, text: String) {
+        val padX = 10 * d
+        val hB = 26 * d
+        val tail = 6 * d
+        val wB = bubbleText.measureText(text) + padX * 2
+        val roomAbove = bottom - tail - hB > 52 * d           // keep clear of the chips on top
+        val top = if (roomAbove) bottom - tail - hB else below + tail
+        val r = RectF(cx - wB / 2, top, cx + wB / 2, top + hB)
+        val shift = when { r.left < 6 * d -> 6 * d - r.left; r.right > width - 6 * d -> width - 6 * d - r.right; else -> 0f }
+        r.offset(shift, 0f)
+        val tailX = cx.coerceIn(r.left + 10 * d, r.right - 10 * d)
+        val path = Path().apply {
+            addRoundRect(r, 13 * d, 13 * d, Path.Direction.CW)
+            if (roomAbove) { moveTo(tailX - 5 * d, r.bottom - 1); lineTo(tailX, r.bottom + tail); lineTo(tailX + 5 * d, r.bottom - 1) }
+            else { moveTo(tailX - 5 * d, r.top + 1); lineTo(tailX, r.top - tail); lineTo(tailX + 5 * d, r.top + 1) }
+        }
+        c.drawPath(path, bubbleFill)
+        c.drawPath(path, bubbleEdge)
+        c.drawText(text, r.left + padX, r.top + hB / 2 + 4.3f * d, bubbleText)
+    }
 
     /** A car with a little depth: a shadow, a lighter roof, windscreens and lamps. */
     private fun car(c: Canvas, cx: Float, cy: Float, w: Float, h: Float, color: Int) {
@@ -174,7 +197,8 @@ class RoadView(
         c.drawPath(p, star)
     }
 
-    private fun tag(c: Canvas, cx: Float, bottom: Float, n: Neighbor, selected: Boolean) {
+    /** Draws the name tag above a car and returns where its top edge is. */
+    private fun tag(c: Canvas, cx: Float, bottom: Float, n: Neighbor, selected: Boolean): Float {
         val t1 = n.nickname
         val t2 = "${n.distanceM}m"
         val pad = 8 * d
@@ -201,5 +225,6 @@ class RoadView(
             c.drawRect(lx - 3 * d, r.top + 24.5f * d, lx + 3 * d, r.top + 30.5f * d, liveP)
             c.drawText("LIVE", lx + 7 * d, r.top + 31 * d, liveP)
         }
+        return r.top
     }
 }

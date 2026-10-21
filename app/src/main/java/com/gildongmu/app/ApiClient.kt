@@ -49,7 +49,7 @@ class ApiClient(private val base: String = "http://10.0.2.2:8080") {
             val o = arr.getJSONObject(it)
             Neighbor(o.getString("id"), o.getString("nickname"), o.getString("model"),
                 o.optString("dest", ""), o.getDouble("distance_m").toInt(), o.getBoolean("same_dest"),
-                o.optBoolean("live", false))
+                o.optBoolean("live", false), if (o.isNull("mood")) null else o.optString("mood", "").ifBlank { null })
         }
     }
 
@@ -107,6 +107,19 @@ class ApiClient(private val base: String = "http://10.0.2.2:8080") {
     /** "고마워요" to whoever wrote the message. */
     fun thanks(msgId: Int) {
         call("POST", "/api/thanks", JSONObject().put("msg_id", msgId))
+    }
+
+    /** "알리기": tell the road what you see, without being asked. kind: accident, work, clearing, ok. */
+    fun inform(kind: String): Boolean = call("POST", "/api/inform", JSONObject().put("kind", kind)).first == 200
+
+    /** "한마디": one of the fixed feelings as a bubble over our car; null clears it. */
+    fun setMood(key: String?): Boolean =
+        call("POST", "/api/mood", JSONObject().put("mood", key ?: JSONObject.NULL)).first == 200
+
+    /** The bubble text over our own car right now, or null. */
+    fun myMood(): String? {
+        val o = JSONObject(call("GET", "/api/mood").second)
+        return if (o.isNull("mood")) null else o.optString("mood").ifBlank { null }
     }
 
     /** Tell the server where we are going so same-destination cars come first. */

@@ -9,6 +9,7 @@ data class Neighbor(
     val distanceM: Int,
     val sameDest: Boolean,
     val live: Boolean = false,   // a real person on a phone, not a simulated car
+    val mood: String? = null,    // the fixed feeling shown as a bubble over the car right now
 )
 
 /** One-touch message: the user never types anything while driving. */

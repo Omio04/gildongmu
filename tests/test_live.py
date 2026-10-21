@@ -235,5 +235,37 @@ class ProfileTest(unittest.TestCase):
         self.assertEqual((r.players[v].nick, r.players[v].dest, r.players[v].show_model), ("신나는고래", "부산", False))
 
 
+class MoodTest(unittest.TestCase):
+    def test_a_mood_shows_for_a_while_and_then_goes(self):
+        r, c = room()
+        v = r.join("귀성길", "곰")
+        r.set_mood(v, "escape")
+        self.assertEqual(r.mood_of(v), "저 탈출할래요!")
+        c.t += live.MOOD_SECONDS + 1
+        self.assertIsNone(r.mood_of(v))
+
+    def test_only_the_fixed_feelings_are_accepted(self):
+        r, _ = room()
+        v = r.join("귀성길", "곰")
+        with self.assertRaises(live.LiveError):
+            r.set_mood(v, "아무 말이나 쓰기")
+        r.set_mood(v, "home")
+        r.set_mood(v, None)
+        self.assertIsNone(r.mood_of(v))
+
+    def test_a_blocked_neighbour_has_no_bubble(self):
+        r, _ = room()
+        v = r.join("귀성길", "곰")
+        r.set_mood(v, "cheer")
+        r.block(v)
+        self.assertIsNone(r.mood_of(v))
+
+    def test_clearing_and_nothing_special_are_reports_too(self):
+        rep = live.Reports(clock=Clock())
+        rep.add("ahead", "clearing", "me")
+        self.assertEqual(rep.summary()[0]["title"], "앞쪽 정체가 풀리는 중")
+        self.assertEqual(rep.summary()[0]["kind"], "info")
+
+
 if __name__ == "__main__":
     unittest.main()

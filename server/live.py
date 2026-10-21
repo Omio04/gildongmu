@@ -9,6 +9,17 @@ import time
 
 NICKS = ["귀성길곰", "느긋한토끼", "졸린사자", "달리는펭귄", "고향행여우", "휴게소요정", "나들이고래", "든든한다람쥐"]
 
+# "도로 위 한마디": a fixed set of feelings, shown as a bubble over a car for a while
+MOODS = {
+    "home": "집 가고 싶어요…",
+    "escape": "저 탈출할래요!",
+    "sleepy": "저만 졸린 거 아니죠?",
+    "cheer": "조금만 버텨요!",
+    "hungry": "배고파요…",
+    "accident": "앞에 사고 났나 봐요!",
+}
+MOOD_SECONDS = 90
+
 # A profile is built only from these lists: nothing a driver types ever reaches another driver.
 ADJECTIVES = ["귀성길", "느긋한", "졸린", "달리는", "든든한", "신나는", "조용한", "반가운", "씩씩한", "여유로운", "부지런한", "포근한"]
 ANIMALS = ["곰", "토끼", "사자", "펭귄", "여우", "고래", "다람쥐", "수달", "고양이", "강아지", "오리", "거북이"]
@@ -64,6 +75,7 @@ class Player:
         self.thanks_unseen = 0   # shown once on the phone as a toast
         self.blocked = False     # reported by a driver: no more questions, and the answers no longer count
         self.paused = False      # "잠시 쉬기": the neighbour chose not to receive questions for now
+        self.mood = None         # (key, when) -- the bubble over this car
 
 
 class LiveRoom:
@@ -207,6 +219,26 @@ class LiveRoom:
         with self.lock:
             self.touch(vid).paused = bool(paused)
 
+    def set_mood(self, vid, key):
+        """Pick one of the fixed feelings; None clears it."""
+        with self.lock:
+            p = self.touch(vid)
+            if key is None:
+                p.mood = None
+            elif key in MOODS:
+                p.mood = (key, self.clock())
+            else:
+                raise LiveError("unknown mood")
+
+    def mood_of(self, vid):
+        """The bubble text to show over this car right now, or None."""
+        with self.lock:
+            p = self.players.get(vid)
+            if not p or p.blocked or not p.mood:
+                return None
+            key, when = p.mood
+            return MOODS[key] if self.clock() - when <= MOOD_SECONDS else None
+
     def block(self, vid):
         """A driver reported this neighbour."""
         with self.lock:
@@ -229,7 +261,8 @@ class LiveRoom:
 # ---- shared picture of what is ahead, built from the answers neighbours give
 
 REPORT_SECONDS = 15 * 60   # a report is stale after this long
-AHEAD_TEXT = {"accident": "앞쪽 사고 처리 중", "work": "앞쪽 공사 중", "jam": "단순 정체, 곧 풀릴 가능성"}
+AHEAD_TEXT = {"accident": "앞쪽 사고 처리 중", "work": "앞쪽 공사 중", "jam": "단순 정체, 곧 풀릴 가능성",
+              "clearing": "앞쪽 정체가 풀리는 중", "ok": "앞쪽 특이사항 없음"}
 REST_TEXT = {"free": "한산해요", "normal": "보통이에요", "busy": "혼잡해요"}
 FOOD_TEXT = {"walnut": "호두과자 맛집이 좋대요", "udon": "휴게소 우동이 괜찮대요"}
 
@@ -281,7 +314,7 @@ class Reports:
             a = top("ahead", AHEAD_TEXT)
             if a:
                 v, n, total, age = a
-                out.append({"kind": "warning" if v != "jam" else "info", "title": AHEAD_TEXT[v],
+                out.append({"kind": "warning" if v in ("accident", "work") else "info", "title": AHEAD_TEXT[v],
                             "detail": f"이웃 {n}명{'' if n == total else f' (총 {total}명 제보)'} · {self._age(age)}"})
             r = top("rest", REST_TEXT)
             if r:
