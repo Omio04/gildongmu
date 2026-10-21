@@ -6,6 +6,11 @@
     <uses-permission android:name="android.car.permission.CAR_SPEED" />
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- ask a neighbour by voice -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <queries>
+        <intent><action android:name="android.speech.RecognitionService" /></intent>
+    </queries>
     <!-- navigation destination / remaining time (read-only) -->
     <uses-permission android:name="pleos.car.permission.NAVI_ROUTE" />
 
@@ -37,6 +42,14 @@
             <meta-data
                 android:name="distractionOptimized"
                 android:value="true" />
+
+            <!-- gildongmu://server?url=http://<pc>:8080 : tells a phone where the server is -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="gildongmu" android:host="server" />
+            </intent-filter>
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

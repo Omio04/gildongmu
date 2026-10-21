@@ -8,6 +8,7 @@ data class Neighbor(
     val dest: String,
     val distanceM: Int,
     val sameDest: Boolean,
+    val live: Boolean = false,   // a real person on a phone, not a simulated car
 )
 
 /** One-touch message: the user never types anything while driving. */

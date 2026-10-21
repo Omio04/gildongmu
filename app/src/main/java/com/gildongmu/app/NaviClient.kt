@@ -44,13 +44,14 @@ class NaviClient(context: Context, private val onTrip: (Trip) -> Unit, private v
     }
 
     /** Demo only: starts a guidance to Daegu so the emulator has a trip to read. */
-    fun startDemoRoute() {
-        if (!ready) return
+    fun startDemoRoute(): Boolean {
+        if (!ready) return false
         try {
             helper.requestRoute(ai.pleos.playground.navi.data.RouteInfo(
                 35.8714, 128.6014, null, null, "대구", "", "대구광역시",
                 "", ai.pleos.playground.navi.constants.RouteOption.RECOMMENDED, "", false))
         } catch (e: Exception) { onState("route failed: ${e.message}") }
+        return true
     }
 
     /** Ask again (remaining time changes as the car moves). */
