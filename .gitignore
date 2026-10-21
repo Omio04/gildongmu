@@ -1,0 +1,29 @@
+# 키/개인정보는 절대 올리지 않기
+local.properties
+.env
+*.keystore
+*.jks
+비밀키*
+*.m4a
+
+# 안드로이드 빌드/IDE
+*.iml
+.gradle/
+.idea/
+.kotlin/
+build/
+captures/
+.externalNativeBuild
+.cxx
+.DS_Store
+
+# 파이썬/로컬 데이터
+__pycache__/
+*.pyc
+demo.db
+
+# 작업하면서 생긴 임시 파일
+shots/
+video/
+demo/work/
+build.log
