@@ -27,10 +27,10 @@ import java.util.Locale
 /**
  * One distraction-optimized screen for the car display (landscape), day and night.
  *
- * Left: road view with the cars around us and how many people are connected.
- * Right: where we are in the trip, what neighbours reported about the road ahead,
- * and the way to ask. Parked or waiting in traffic: one-touch questions (to everyone, or to one car you
- * tap on the road). Moving: the buttons are replaced by a voice screen, so nothing useless sits locked.
+ * Left: the road with the cars around us, our state and trip on top, how many people are connected below.
+ * Right: what neighbours reported about the road ahead, how to ask, the answers, and the voice bar.
+ * Parked or waiting in traffic: four quick questions (to everyone, or to one car tapped on the road).
+ * Moving: the buttons give way to a big voice screen, so nothing useless sits locked.
  * No text input, no video, no settings -> compatible with restriction flags 0x50.
  */
 class MainActivity : AppCompatActivity() {
@@ -46,7 +46,6 @@ class MainActivity : AppCompatActivity() {
 
     // trip data
     private var navi: NaviClient? = null
-    private var trip: Trip? = null
     private var destName = "대구"
     private var situation: List<SituationItem> = emptyList()
 
@@ -61,40 +60,40 @@ class MainActivity : AppCompatActivity() {
     private var lastInboxId = 0
     private var polling = false
     private var inboxPrimed = false
+    private var tick = 0
+
+    // the answers to the last question
+    private var answers = mutableListOf<Inbound>()
+    private var answersTitle = "이웃의 답"
+    private var answerLimit = MAX_ANSWERS
+    private var note: String? = null
+    private var expandedId: Int? = null
+    private val thankedIds = mutableSetOf<Int>()
+    private var waitingText: String? = null
+    private var pixel = 0
 
     // views
     private lateinit var road: RoadView
-    private lateinit var liveChip: TextView
-    private lateinit var crowdText: TextView
     private lateinit var stateDot: View
     private lateinit var stateText: TextView
     private lateinit var tripMain: TextView
     private lateinit var tripSub: TextView
-    private lateinit var micBtn: LinearLayout
-    private lateinit var situationCard: LinearLayout
+    private lateinit var liveChip: TextView
+    private lateinit var crowdText: TextView
+    private lateinit var bannerCard: LinearLayout
     private lateinit var stoppedArea: LinearLayout
     private lateinit var chipAll: LinearLayout
     private lateinit var chipAllText: TextView
     private lateinit var chipOne: LinearLayout
     private lateinit var chipOneText: TextView
+    private lateinit var answersCard: LinearLayout
+    private lateinit var answersHeader: TextView
+    private lateinit var answersCount: TextView
+    private lateinit var answersList: LinearLayout
+    private lateinit var voiceBar: LinearLayout
+    private lateinit var voiceWave: WaveView
     private lateinit var voiceHero: LinearLayout
-    private lateinit var replyCard: LinearLayout
-    private lateinit var replyAvatar: TextView
-    private lateinit var replyTitle: TextView
-    private lateinit var replyLive: TextView
-    private lateinit var replyBody: TextView
-    private lateinit var couponRow: LinearLayout
-    private lateinit var couponText: TextView
-    private lateinit var thanksBtn: LinearLayout
-    private lateinit var thanksText: TextView
-    private lateinit var reportBtn: TextView
-    private val presetViews = mutableListOf<Triple<LinearLayout, ImageView, TextView>>()
-
-    // answer card state
-    private var currentMsgId = -1
-    private var thanked = false
-    private var waitingText: String? = null
-    private var tick = 0
+    private val tileViews = mutableListOf<Triple<LinearLayout, ImageView, TextView>>()
 
     private val fRegular by lazy { ResourcesCompat.getFont(this, R.font.pretendard_regular) ?: Typeface.DEFAULT }
     private val fSemi by lazy { ResourcesCompat.getFont(this, R.font.pretendard_semibold) ?: Typeface.DEFAULT_BOLD }
@@ -116,9 +115,9 @@ class MainActivity : AppCompatActivity() {
             }
         }
         voice = VoiceInput(this,
-            onHeard = { spoken -> ui.post { askSpoken(spoken) } },
-            onProblem = { msg -> ui.post { showNote(msg) } },
-            onListening = { ui.post { startWaiting("듣고 있어요"); setReplyTitle("말씀해 주세요", false) } })
+            onHeard = { spoken -> ui.post { voiceWave.active = false; askSpoken(spoken) } },
+            onProblem = { msg -> ui.post { voiceWave.active = false; showNote(msg) } },
+            onListening = { ui.post { voiceWave.active = true; startWaiting("듣고 있어요") } })
 
         if (ContextCompat.checkSelfPermission(this, SPEED_PERMISSION) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, arrayOf(SPEED_PERMISSION), 1)
@@ -126,6 +125,7 @@ class MainActivity : AppCompatActivity() {
         monitor = DrivingMonitor(this) { newInfo -> ui.post { onDriveInfo(newInfo) } }
         monitor.start()
         render()
+        renderAnswers()
         polling = true
         pollLoop()
 
@@ -176,14 +176,21 @@ class MainActivity : AppCompatActivity() {
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
-    private fun rounded(color: Int, radius: Int = 24) = GradientDrawable().apply {
+    /** A glass card: a soft fill and a thin edge. */
+    private fun glass(color: Int = t.surface, radius: Int = 22) = GradientDrawable().apply {
+        setColor(color)
+        cornerRadius = dp(radius).toFloat()
+        setStroke(dp(1), t.border)
+    }
+
+    private fun fill(color: Int, radius: Int = 24) = GradientDrawable().apply {
         setColor(color)
         cornerRadius = dp(radius).toFloat()
     }
 
     private fun oval(color: Int) = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(color) }
 
-    /** weight: 0 regular, 1 semibold, 2 bold. Sizes used: 12 meta, 15 body, 18 label, 21 title, 24 answer. */
+    /** weight: 0 regular, 1 semibold, 2 bold. Sizes used: 12 meta, 15 body, 18 label, 22 title. */
     private fun text(s: String, sp: Float, color: Int = t.ink, weight: Int = 0) =
         TextView(this).apply {
             text = s
@@ -193,20 +200,13 @@ class MainActivity : AppCompatActivity() {
             includeFontPadding = false
         }
 
-    private fun card(padV: Int = 14, padH: Int = 18) = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        background = rounded(t.surface, 26)
-        elevation = if (t.night) 0f else dp(2).toFloat()
-        setPadding(dp(padH), dp(padV), dp(padH), dp(padV))
-    }
-
     private fun icon(res: Int, sizeDp: Int, tint: Int) = ImageView(this).apply {
         setImageResource(res)
         setColorFilter(tint)
         layoutParams = LinearLayout.LayoutParams(dp(sizeDp), dp(sizeDp))
     }
 
-    private fun badge(res: Int, color: Int, box: Int = 44, glyph: Int = 22): FrameLayout {
+    private fun badge(res: Int, color: Int, glyph: Int = 22): FrameLayout {
         val ic = ImageView(this).apply { setImageResource(res); setColorFilter(Color.WHITE) }
         return FrameLayout(this).apply {
             background = oval(color)
@@ -216,7 +216,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun pill(label: String, bgColor: Int, fg: Int = Color.WHITE, sp: Float = 12f) =
         text(label, sp, fg, 2).apply {
-            background = rounded(bgColor, 10)
+            background = fill(bgColor, 10)
             setPadding(dp(9), dp(4), dp(9), dp(4))
         }
 
@@ -235,33 +235,52 @@ class MainActivity : AppCompatActivity() {
     private fun buildUi(): View {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setBackgroundColor(t.bg)
-            setPadding(dp(18), dp(14), dp(18), dp(14))
+            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(t.bgTop, t.bgBottom))
+            setPadding(dp(16), dp(12), dp(16), dp(12))
         }
         root.addView(buildRoadPanel(), LinearLayout.LayoutParams(0, -1, 1f))
-        root.addView(View(this), LinearLayout.LayoutParams(dp(14), 1))
-        root.addView(buildRightPanel(), LinearLayout.LayoutParams(0, -1, 1.35f))
+        root.addView(View(this), LinearLayout.LayoutParams(dp(12), 1))
+        root.addView(buildRightPanel(), LinearLayout.LayoutParams(0, -1, 1.28f))
         return root
     }
 
     private fun buildRoadPanel(): View {
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        head.addView(text("길동무", 22f, t.primary, 2))
-        head.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
-        liveChip = pill("실제 이웃 0명", t.parked).apply { visibility = View.GONE }
-        head.addView(liveChip)
-        col.addView(head, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
 
+        // the road, with our state and trip floating on top
+        val frame = FrameLayout(this)
         road = RoadView(this, DemoData.neighbors, t, fRegular, fSemi).apply {
             onPick = { n -> directTarget = n; selectedId = n.id; updateScope() }
         }
-        col.addView(road, LinearLayout.LayoutParams(-1, 0, 1f))
+        frame.addView(road, FrameLayout.LayoutParams(-1, -1))
+        val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(dp(10), dp(10), dp(10), 0) }
+        val state = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            background = fill(if (t.night) Color.parseColor("#CC0B1424") else Color.parseColor("#E6FFFFFF"), 16)
+            setPadding(dp(12), dp(8), dp(14), dp(8))
+        }
+        stateDot = View(this)
+        state.addView(stateDot, LinearLayout.LayoutParams(dp(10), dp(10)).apply { rightMargin = dp(8) })
+        stateText = text("", 15f, t.ink, 2)
+        state.addView(stateText)
+        top.addView(state, LinearLayout.LayoutParams(-2, -2).apply { rightMargin = dp(8) })
+        val trip = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = fill(if (t.night) Color.parseColor("#CC0B1424") else Color.parseColor("#E6FFFFFF"), 16)
+            setPadding(dp(12), dp(6), dp(14), dp(6))
+        }
+        tripMain = text("목적지 미설정", 14f, t.primary, 2).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }
+        tripSub = text("내비에서 설정해 주세요", 11f, t.muted)
+        trip.addView(tripMain)
+        trip.addView(tripSub, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
+        top.addView(trip, LinearLayout.LayoutParams(0, -2, 1f))
+        frame.addView(top, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
+        col.addView(frame, LinearLayout.LayoutParams(-1, 0, 1f))
 
         // how many people and cars are around right now
         val crowd = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
-            background = rounded(t.surface, 18)
+            background = glass(radius = 18)
             setPadding(dp(16), dp(11), dp(16), dp(11))
         }
         crowd.addView(View(this).apply { setBackgroundColor(t.parked) }, LinearLayout.LayoutParams(dp(8), dp(8)).apply { rightMargin = dp(10) })
@@ -274,94 +293,117 @@ class MainActivity : AppCompatActivity() {
     private fun buildRightPanel(): View {
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
-        // row 1: driving state, trip, voice
-        val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val state = card(12, 16).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        stateDot = View(this)
-        state.addView(stateDot, LinearLayout.LayoutParams(dp(12), dp(12)).apply { rightMargin = dp(9) })
-        stateText = text("", 18f, t.ink, 2)
-        state.addView(stateText)
-        top.addView(state, LinearLayout.LayoutParams(-2, -1).apply { rightMargin = dp(10) })
-
-        val tripCard = card(10, 18).apply { gravity = Gravity.CENTER_VERTICAL }
-        tripMain = text("내비에서 목적지를 설정해 주세요", 18f, t.primary, 2)
-        tripSub = text("내비게이션과 연결돼요", 13f, t.muted)
-        tripCard.addView(tripMain)
-        tripCard.addView(tripSub, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(3) })
-        top.addView(tripCard, LinearLayout.LayoutParams(0, -1, 1f))
-
-        micBtn = LinearLayout(this).apply {
-            gravity = Gravity.CENTER
-            background = rounded(t.primary.let { if (t.night) t.accent else t.navyFill }, 24)
-            elevation = dp(2).toFloat()
-            setPadding(dp(16), 0, dp(18), 0)
-            setOnClickListener { startVoice() }
+        // header: who we are, and whether real people are on the road
+        val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        val logo = FrameLayout(this).apply {
+            background = fill(t.navyFill, 11)
+            addView(ImageView(this@MainActivity).apply { setImageResource(R.drawable.ic_launcher_foreground) },
+                FrameLayout.LayoutParams(dp(40), dp(40), Gravity.CENTER))
         }
-        micBtn.addView(icon(R.drawable.ic_mic, 22, Color.WHITE))
-        micBtn.addView(text("말로 질문", 15f, Color.WHITE, 2).apply { setPadding(dp(8), 0, 0, 0) })
-        press(micBtn)
-        top.addView(micBtn, LinearLayout.LayoutParams(-2, -1).apply { leftMargin = dp(10) })
-        col.addView(top, LinearLayout.LayoutParams(-1, dp(62)).apply { bottomMargin = dp(8) })
+        head.addView(logo, LinearLayout.LayoutParams(dp(34), dp(34)).apply { rightMargin = dp(10) })
+        head.addView(text("길동무", 22f, t.primary, 2))
+        head.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+        liveChip = text("● 시뮬레이션", 13f, t.muted, 2).apply {
+            background = glass(radius = 16)
+            setPadding(dp(14), dp(7), dp(14), dp(7))
+        }
+        head.addView(liveChip)
+        col.addView(head, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
 
-        // row 2: what is ahead, as reported by neighbours (hidden until someone has told us something)
-        situationCard = LinearLayout(this).apply {
+        // what neighbours reported about the road ahead (always there, so the layout does not jump)
+        bannerCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = rounded(t.surface, 22)
+            background = glass(radius = 20)
             setPadding(dp(16), dp(10), dp(16), dp(10))
-            visibility = View.GONE
         }
-        col.addView(situationCard, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
+        col.addView(bannerCard, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
+        renderSituation(emptyList(), force = true)
 
-        // row 3a (parked / waiting in traffic): who to ask, then the four questions
+        // parked / waiting in traffic: who to ask, then the four quick questions
         stoppedArea = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val scope = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         chipAllText = text("전체 이웃", 15f, Color.WHITE, 2)
         chipAll = chip(chipAllText) { directMode = false; directTarget = null; road.selectedId = null; updateScope() }
         chipOneText = text("한 대에게", 15f, t.ink, 2)
         chipOne = chip(chipOneText) { directMode = true; updateScope() }
-        scope.addView(chipAll, LinearLayout.LayoutParams(0, dp(40), 1f).apply { rightMargin = dp(8) })
-        scope.addView(chipOne, LinearLayout.LayoutParams(0, dp(40), 1f))
-        stoppedArea.addView(scope, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(4) })
+        scope.addView(chipAll, LinearLayout.LayoutParams(0, dp(38), 1f).apply { rightMargin = dp(8) })
+        scope.addView(chipOne, LinearLayout.LayoutParams(0, dp(38), 1f))
+        stoppedArea.addView(scope, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
 
-        val icons = mapOf(
-            "HELLO" to R.drawable.ic_chat, "ASK_REST" to R.drawable.ic_parking,
-            "ASK_FOOD" to R.drawable.ic_food, "ASK_ACCIDENT" to R.drawable.ic_warning,
+        val tiles = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val spec = listOf(
+            Triple("ASK_REST", "휴게소 혼잡", R.drawable.ic_parking),
+            Triple("ASK_FOOD", "맛집", R.drawable.ic_food),
+            Triple("ASK_ACCIDENT", "앞 상황", R.drawable.ic_warning),
+            Triple("HELLO", "인사", R.drawable.ic_chat),
         )
-        DemoData.presets.chunked(2).forEach { pair ->
-            val line = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-            pair.forEach { p ->
-                val bd = badge(icons[p.code] ?: R.drawable.ic_chat, t.accent, 46, 24)
-                val ic = bd.getChildAt(0) as ImageView
-                val label = text(p.label, 17f, t.ink, 1)
-                val btn = LinearLayout(this).apply {
-                    gravity = Gravity.CENTER_VERTICAL
-                    background = rounded(t.surface, 24)
-                    elevation = if (t.night) 0f else dp(2).toFloat()
-                    setPadding(dp(14), dp(8), dp(14), dp(8))
-                    minimumHeight = dp(76)
-                    setOnClickListener { send(p) }
-                }
-                press(btn)
-                btn.addView(bd, LinearLayout.LayoutParams(dp(46), dp(46)).apply { rightMargin = dp(12) })
-                btn.addView(label, LinearLayout.LayoutParams(0, -2, 1f))
-                presetViews += Triple(btn, ic, label)
-                line.addView(btn, LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(dp(4), dp(4), dp(4), dp(4)) })
+        spec.forEachIndexed { i, (code, short, res) ->
+            val preset = DemoData.presets.first { it.code == code }
+            val bd = badge(res, t.accent, 22)
+            val label = text(short, 15f, t.ink, 2).apply { gravity = Gravity.CENTER }
+            val tile = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                background = glass(radius = 22)
+                setPadding(dp(6), dp(12), dp(6), dp(12))
+                setOnClickListener { send(preset) }
             }
-            stoppedArea.addView(line, LinearLayout.LayoutParams(-1, -2))
+            press(tile)
+            tile.addView(bd, LinearLayout.LayoutParams(dp(40), dp(40)))
+            tile.addView(label, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(8) })
+            tileViews += Triple(tile, bd.getChildAt(0) as ImageView, label)
+            tiles.addView(tile, LinearLayout.LayoutParams(0, -2, 1f).apply { if (i > 0) leftMargin = dp(8) })
         }
+        stoppedArea.addView(tiles, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
         col.addView(stoppedArea, LinearLayout.LayoutParams(-1, -2))
 
-        // row 3b (moving): voice is the way to ask, so show that instead of locked buttons
+        // the answers
+        answersCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = glass(radius = 22)
+            setPadding(dp(16), dp(12), dp(16), dp(10))
+        }
+        val ah = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        answersHeader = text("이웃의 답", 14f, t.muted, 2)
+        answersCount = text("", 13f, t.accent, 2)
+        ah.addView(answersHeader)
+        ah.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+        ah.addView(answersCount)
+        answersCard.addView(ah)
+        answersList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        answersCard.addView(answersList, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = dp(6) })
+        col.addView(answersCard, LinearLayout.LayoutParams(-1, 0, 1f).apply { bottomMargin = dp(8) })
+
+        // the voice bar (compact) and, while moving, the big voice screen in its place
+        voiceBar = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            background = glass(radius = 24)
+            setPadding(dp(12), dp(8), dp(18), dp(8))
+            setOnClickListener { startVoice() }
+        }
+        press(voiceBar)
+        val ring = FrameLayout(this).apply {
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.TRANSPARENT); setStroke(dp(2), t.accent) }
+            addView(icon(R.drawable.ic_mic, 22, t.accent), FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER))
+        }
+        voiceBar.addView(ring, LinearLayout.LayoutParams(dp(46), dp(46)).apply { rightMargin = dp(14) })
+        val vtext = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        vtext.addView(text("말로 물어보세요", 17f, t.ink, 2))
+        vtext.addView(text("“다음 휴게소 막혀?”", 13f, t.muted), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
+        voiceBar.addView(vtext, LinearLayout.LayoutParams(0, -2, 1f))
+        voiceWave = WaveView(this, t.accent)
+        voiceBar.addView(voiceWave, LinearLayout.LayoutParams(dp(54), dp(26)))
+        col.addView(voiceBar, LinearLayout.LayoutParams(-1, dp(62)))
+
         voiceHero = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
-            background = rounded(if (t.night) t.surface else t.navyFill, 28)
+            background = fill(if (t.night) t.surfaceAlt else t.navyFill, 28)
             setPadding(dp(20), dp(14), dp(22), dp(14))
             visibility = View.GONE
             setOnClickListener { startVoice() }
         }
         press(voiceHero)
-        val mic = badge(R.drawable.ic_mic, t.accent, 72, 36)
-        voiceHero.addView(mic, LinearLayout.LayoutParams(dp(72), dp(72)).apply { rightMargin = dp(18) })
+        voiceHero.addView(badge(R.drawable.ic_mic, t.accent, 36), LinearLayout.LayoutParams(dp(72), dp(72)).apply { rightMargin = dp(18) })
         val vcol = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         vcol.addView(text("말로 물어보세요", 22f, Color.WHITE, 2))
         vcol.addView(text("“다음 휴게소 혼잡해?”  “앞에 무슨 일이야?”", 14f, Color.parseColor("#C9D6EA")),
@@ -369,51 +411,7 @@ class MainActivity : AppCompatActivity() {
         vcol.addView(text("달리는 중에는 근처 모든 이웃에게 물어요 · 답은 음성으로 들려드려요", 12f, Color.parseColor("#9FB2D0")),
             LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
         voiceHero.addView(vcol)
-        col.addView(voiceHero, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2) })
-
-        // row 4: the answer
-        replyCard = card(14, 18).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        replyAvatar = text("길", 20f, Color.WHITE, 2).apply { gravity = Gravity.CENTER; background = oval(t.navyFill) }
-        replyCard.addView(replyAvatar, LinearLayout.LayoutParams(dp(56), dp(56)).apply { rightMargin = dp(16) })
-
-        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val titleRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        replyTitle = text("받은 답변", 13f, t.muted, 1)
-        replyLive = pill("LIVE", t.parked, Color.WHITE, 11f).apply { visibility = View.GONE }
-        titleRow.addView(replyTitle)
-        titleRow.addView(replyLive, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) })
-        body.addView(titleRow)
-        replyBody = text("물어보면 근처 이웃이 답해요", 22f, t.ink, 2)
-        body.addView(replyBody, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
-
-        val bottom = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        couponRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; visibility = View.GONE }
-        couponRow.addView(pill("쿠폰", t.accent, Color.WHITE, 13f))
-        couponText = text("", 15f, t.accent, 1).apply { setPadding(dp(10), 0, 0, 0) }
-        couponRow.addView(couponText)
-        bottom.addView(couponRow)
-        bottom.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
-        thanksBtn = LinearLayout(this).apply {
-            gravity = Gravity.CENTER_VERTICAL
-            background = rounded(t.heartSoft, 20)
-            setPadding(dp(14), dp(8), dp(16), dp(8))
-            visibility = View.GONE
-            setOnClickListener { thank() }
-        }
-        thanksBtn.addView(icon(R.drawable.ic_heart, 18, t.heart))
-        thanksText = text("고마워요", 15f, t.heart, 2).apply { setPadding(dp(7), 0, 0, 0) }
-        thanksBtn.addView(thanksText)
-        bottom.addView(thanksBtn)
-        reportBtn = text("신고", 13f, t.muted, 1).apply {
-            setPadding(dp(14), dp(8), dp(4), dp(8))
-            visibility = View.GONE
-            setOnClickListener { reportCurrent() }
-        }
-        bottom.addView(reportBtn)
-        body.addView(bottom, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
-        replyCard.addView(body, LinearLayout.LayoutParams(0, -2, 1f))
-        replyCard.addView(icon(R.drawable.ic_volume, 24, t.muted))
-        col.addView(replyCard, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = dp(8) })
+        col.addView(voiceHero, LinearLayout.LayoutParams(-1, -2))
         return col
     }
 
@@ -429,7 +427,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateScope() {
         fun style(chip: LinearLayout, label: TextView, on: Boolean) {
-            chip.background = rounded(if (on) (if (t.night) t.accent else t.navyFill) else t.surface, 20)
+            chip.background = if (on) fill(t.strong, 19) else glass(radius = 19)
             label.setTextColor(if (on) Color.WHITE else t.ink)
         }
         val people = neighbors.count { it.live }
@@ -448,13 +446,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun onTrip(tr: Trip) {
         if (tr.destination.isBlank()) return
-        trip = tr
         destName = tr.destination
         val h = tr.remainMin / 60
         val m = tr.remainMin % 60
-        tripMain.text = "${tr.destination}까지 " + (if (h > 0) "${h}시간 " else "") + "${m}분"
+        tripMain.text = "${tr.destination} " + (if (h > 0) "${h}시간 " else "") + "${m}분"
         val eta = SimpleDateFormat("a h:mm", Locale.KOREA).format(Date(System.currentTimeMillis() + tr.remainMin * 60_000L))
-        tripSub.text = "%.0fkm · %s 도착 예정".format(tr.remainKm, eta)
+        tripSub.text = "%.0fkm · %s 도착".format(tr.remainKm, eta)
         io.execute { try { api.setDestination(tr.destination) } catch (_: Exception) {} }
     }
 
@@ -486,8 +483,8 @@ class MainActivity : AppCompatActivity() {
         neighbors = near
         road.neighbors = near
         val people = near.count { it.live }
-        liveChip.visibility = if (people > 0) View.VISIBLE else View.GONE
-        liveChip.text = "실제 이웃 ${people}명"
+        liveChip.text = if (people > 0) "● LIVE · 실제 이웃 ${people}명" else "● 시뮬레이션"
+        liveChip.setTextColor(if (people > 0) t.parked else t.muted)
         crowdText.text = "지금 연결된 이웃  사람 ${people}명 · 주변 차량 ${near.size}대"
         if (directTarget != null && near.none { it.id == directTarget!!.id }) {  // the car we picked drove off
             directTarget = null
@@ -497,13 +494,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** Every answer a neighbour gives is shared: whoever asked first, everyone on the road reads it. */
-    private fun renderSituation(items: List<SituationItem>) {
-        if (items == situation) return
+    private fun renderSituation(items: List<SituationItem>, force: Boolean = false) {
+        if (!force && items == situation) return
         situation = items
-        situationCard.removeAllViews()
-        if (items.isEmpty()) { situationCard.visibility = View.GONE; return }
-        situationCard.visibility = View.VISIBLE
-        situationCard.addView(text("앞 상황 · 이웃 제보", 12f, t.muted, 1))
+        bannerCard.removeAllViews()
+        bannerCard.addView(text("앞 상황 · 이웃 제보", 12f, t.muted, 1))
+        if (items.isEmpty()) {
+            bannerCard.addView(text("아직 제보가 없어요. 물어보면 이웃이 알려 줘요", 15f, t.ink, 1),
+                LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) })
+            return
+        }
         items.take(2).forEach { item ->
             val (accent, glyph) = when (item.kind) {
                 "warning" -> t.moving to R.drawable.ic_warning
@@ -512,12 +512,12 @@ class MainActivity : AppCompatActivity() {
                 else -> t.accent to R.drawable.ic_info
             }
             val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-            row.addView(badge(glyph, accent, 30, 16), LinearLayout.LayoutParams(dp(30), dp(30)).apply { rightMargin = dp(10) })
+            row.addView(badge(glyph, accent, 16), LinearLayout.LayoutParams(dp(30), dp(30)).apply { rightMargin = dp(10) })
             val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
             col.addView(text(item.title, 16f, t.ink, 2), LinearLayout.LayoutParams(-2, -2))
             col.addView(text(item.detail, 12f, t.muted), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(1) })
             row.addView(col)
-            situationCard.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(7) })
+            bannerCard.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(7) })
         }
     }
 
@@ -543,21 +543,20 @@ class MainActivity : AppCompatActivity() {
         val moving = info.state == DriveState.MOVING
         road.moving = moving
 
-        // moving: voice screen instead of locked buttons
+        // moving: the big voice screen instead of the buttons
         stoppedArea.visibility = if (moving) View.GONE else View.VISIBLE
+        voiceBar.visibility = if (moving) View.GONE else View.VISIBLE
         voiceHero.visibility = if (moving) View.VISIBLE else View.GONE
-        micBtn.visibility = if (moving) View.GONE else View.VISIBLE
         if (moving) { directMode = false; directTarget = null; road.selectedId = null }
         updateScope()
 
         val enabled = info.canSend
-        presetViews.forEach { (btn, ic, label) ->
-            btn.isEnabled = enabled
+        tileViews.forEach { (tile, ic, label) ->
+            tile.isEnabled = enabled
             ic.alpha = if (enabled) 1f else 0.55f
             label.setTextColor(if (enabled) t.ink else t.faint)
         }
-        thanksBtn.alpha = if (enabled || thanked) 1f else 0.45f
-        reportBtn.alpha = if (enabled) 1f else 0.45f
+        renderAnswers()
     }
 
     private fun gearCode() = if (info.state == DriveState.PARKED) "P" else "D"
@@ -566,8 +565,8 @@ class MainActivity : AppCompatActivity() {
         if (!info.canSend) return
         if (directMode && directTarget == null) { showNote("먼저 도로에서 물어볼 차를 눌러 주세요"); return }
         val to = if (directMode) directTarget?.id else null
+        newQuestion(if (to != null) "${directTarget!!.nickname}에게 물어봤어요" else "전체 이웃에게 물어봤어요", to != null)
         startWaiting(if (to != null) "${directTarget!!.nickname}에게 물어보는 중" else "근처 이웃에게 물어보는 중")
-        setReplyTitle("보냄 · ${p.label}", live = false)
         val speed = info.speedKmh ?: 0f
         io.execute {
             val res = try { api.send(p.code, if (p.code == "HELLO") destName else null, speed, gearCode(), to) } catch (e: Exception) { null }
@@ -577,12 +576,20 @@ class MainActivity : AppCompatActivity() {
 
     /** Hands-free: stays available while driving, which is how a driver asks once the buttons are gone. */
     private fun askSpoken(spoken: String) {
+        newQuestion("“$spoken”", false)
         startWaiting("근처 이웃에게 물어보는 중")
-        setReplyTitle("“$spoken”", live = false)
         io.execute {
             val res = try { api.sendSpoken(spoken, destName, gearCode()) } catch (e: Exception) { null }
             deliver(res, null)
         }
+    }
+
+    private fun newQuestion(title: String, direct: Boolean) {
+        answers.clear()
+        note = null
+        expandedId = null
+        answersTitle = title
+        answerLimit = if (direct) 1 else MAX_ANSWERS
     }
 
     private fun deliver(res: SendResult?, presetCode: String?) {
@@ -614,87 +621,120 @@ class MainActivity : AppCompatActivity() {
     private fun showInbound(m: Inbound) {
         lastInboxId = maxOf(lastInboxId, m.id)
         stopWaiting()
-        swapReply {
-            setReplyTitle(if (m.auto) "자동 안내 · ${m.from}" else "${m.from}님의 답변", live = m.human)
-            replyBody.text = m.text
-            replyAvatar.text = m.from.take(1)
-            replyAvatar.background = oval(if (m.auto) t.waiting else t.accent)
-            couponRow.visibility = if (m.coupon.isBlank()) View.GONE else View.VISIBLE
-            couponText.text = m.coupon
-            currentMsgId = m.id
-            thanked = false
-            thanksText.text = "고마워요"
-            thanksBtn.visibility = if (m.auto || m.id < 0) View.GONE else View.VISIBLE
-            reportBtn.visibility = thanksBtn.visibility
-            render()
-        }
+        note = null
+        if (answers.size >= answerLimit) answers.removeAt(0)
+        answers += m
+        renderAnswers()
         speak(m.text)
     }
 
-    /** A short message in the answer card (hearing problems, errors, confirmations). */
+    /** A short message in the answers card (hearing problems, errors, confirmations). */
     private fun showNote(msg: String) {
         stopWaiting()
-        swapReply {
-            setReplyTitle("길동무", live = false)
-            replyBody.text = msg
-            replyAvatar.text = "길"
-            replyAvatar.background = oval(t.navyFill)
-            couponRow.visibility = View.GONE
-            thanksBtn.visibility = View.GONE
-            reportBtn.visibility = View.GONE
+        answers.clear()
+        note = msg
+        renderAnswers()
+    }
+
+    // ---------------------------------------------------------------- the answers card
+
+    private fun renderAnswers() {
+        if (!::answersList.isInitialized) return
+        answersHeader.text = answersTitle
+        answersCount.text = if (answers.isEmpty()) "" else "답변 ${answers.size}/$answerLimit"
+        answersList.removeAllViews()
+        val enabled = info.canSend
+
+        waitingText?.let {
+            answersList.addView(text("$it  ${(0 until 3).joinToString("") { i -> if (i == pixel) "■" else "□" }}", 20f, t.ink, 2),
+                LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(8) })
+        }
+        if (answers.isEmpty() && waitingText == null) {
+            answersList.addView(text(note ?: "물어보면 근처 이웃이 답해요", 20f, t.ink, 2),
+                LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(8) })
+        }
+        answers.takeLast(3).forEach { m ->
+            val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+            val av = text(m.from.take(1), 15f, Color.WHITE, 2).apply {
+                gravity = Gravity.CENTER
+                background = oval(if (m.auto) t.waiting else t.accent)
+            }
+            row.addView(av, LinearLayout.LayoutParams(dp(36), dp(36)).apply { rightMargin = dp(12) })
+            val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            val nameRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+            nameRow.addView(text(if (m.auto) "자동 안내 · ${m.from}" else m.from, 12f, t.muted, 1))
+            if (m.human) nameRow.addView(pill("LIVE", t.parked, Color.WHITE, 10f), LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(6) })
+            col.addView(nameRow)
+            col.addView(text(m.text, 18f, t.ink, 2).apply { maxLines = 2 }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
+            if (m.coupon.isNotBlank()) {
+                val cr = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+                cr.addView(pill("쿠폰", t.accent, Color.WHITE, 11f))
+                cr.addView(text(m.coupon, 13f, t.accent, 1).apply { setPadding(dp(8), 0, 0, 0) })
+                col.addView(cr, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
+            }
+            row.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
+            val play = badge(R.drawable.ic_play, if (t.night) t.surfaceAlt else t.navyFill, 16).apply {
+                setOnClickListener { speak(m.text) }
+            }
+            row.addView(play, LinearLayout.LayoutParams(dp(36), dp(36)).apply { leftMargin = dp(8) })
+            box.addView(row)
+            if (!m.auto && m.id >= 0) {
+                if (expandedId == m.id) {
+                    val actions = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(48), dp(8), 0, 0) }
+                    val done = m.id in thankedIds
+                    val thanks = LinearLayout(this).apply {
+                        gravity = Gravity.CENTER_VERTICAL
+                        background = fill(t.heartSoft, 18)
+                        setPadding(dp(14), dp(7), dp(16), dp(7))
+                        alpha = if (enabled || done) 1f else 0.45f
+                        setOnClickListener { thank(m.id) }
+                    }
+                    thanks.addView(icon(R.drawable.ic_heart, 16, t.heart))
+                    thanks.addView(text(if (done) "전했어요 ✓" else "고마워요", 14f, t.heart, 2).apply { setPadding(dp(6), 0, 0, 0) })
+                    actions.addView(thanks)
+                    actions.addView(text("신고", 13f, t.muted, 1).apply {
+                        setPadding(dp(16), dp(8), dp(6), dp(8))
+                        alpha = if (enabled) 1f else 0.45f
+                        setOnClickListener { report(m.id) }
+                    })
+                    box.addView(actions)
+                }
+                row.setOnClickListener { expandedId = if (expandedId == m.id) null else m.id; renderAnswers() }
+            }
+            answersList.addView(box, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
         }
     }
 
-    private fun thank() {
-        if (!info.canSend || thanked || currentMsgId < 0) return
-        thanked = true
-        thanksText.text = "전했어요 ✓"
-        val id = currentMsgId
+    private fun thank(id: Int) {
+        if (!info.canSend || id in thankedIds) return
+        thankedIds += id
+        renderAnswers()
         io.execute { try { api.thanks(id) } catch (_: Exception) {} }
     }
 
-    private fun reportCurrent() {
-        if (!info.canSend || currentMsgId < 0) return
-        val id = currentMsgId
-        currentMsgId = -1
+    private fun report(id: Int) {
+        if (!info.canSend) return
         io.execute { try { api.report(id) } catch (_: Exception) {} }
-        showNote("신고했어요 · 이 이웃의 답은 더 이상 보이지 않아요")
-    }
-
-    private fun setReplyTitle(s: String, live: Boolean) {
-        replyTitle.text = s
-        replyLive.visibility = if (live) View.VISIBLE else View.GONE
-    }
-
-    /** Cross-fade the answer card so a new answer is noticed without being jarring. */
-    private fun swapReply(update: () -> Unit) {
-        replyCard.animate().cancel()
-        replyCard.animate().alpha(0f).translationY(dp(6).toFloat()).setDuration(100).withEndAction {
-            update()
-            replyCard.translationY = -dp(6).toFloat()
-            replyCard.animate().alpha(1f).translationY(0f).setDuration(220).start()
-        }.start()
+        answers.removeAll { it.id == id }
+        note = "신고했어요 · 이 이웃의 답은 더 이상 보이지 않아요"
+        expandedId = null
+        renderAnswers()
     }
 
     // waiting indicator: three pixel squares that light up one after another
-    private var pixel = 0
     private val pixelRunnable = object : Runnable {
         override fun run() {
-            val base = waitingText ?: return
+            if (waitingText == null) return
             pixel = (pixel + 1) % 3
-            val squares = (0 until 3).joinToString("") { if (it == pixel) "■" else "□" }
-            replyBody.text = "$base  $squares"
+            renderAnswers()
             ui.postDelayed(this, 380)
         }
     }
 
     private fun startWaiting(text: String) {
         waitingText = text
-        thanksBtn.visibility = View.GONE
-        reportBtn.visibility = View.GONE
-        couponRow.visibility = View.GONE
-        replyAvatar.background = oval(t.muted)
-        replyAvatar.text = "…"
+        note = null
         ui.removeCallbacks(pixelRunnable)
         pixelRunnable.run()
     }
@@ -711,5 +751,6 @@ class MainActivity : AppCompatActivity() {
     companion object {
         const val SPEED_PERMISSION = "android.car.permission.CAR_SPEED"
         private const val TAG = "Gildongmu"
+        private const val MAX_ANSWERS = 3
     }
 }

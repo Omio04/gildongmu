@@ -4,9 +4,12 @@ import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.RadialGradient
 import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.view.MotionEvent
 import android.view.View
@@ -18,7 +21,13 @@ import android.view.animation.LinearInterpolator
  * The lane marks and the LIVE mark are small squares, a nod to Hyundai's pixel lamp motif.
  * In "pick" mode a tap on a car chooses it as the one car to ask.
  */
-class RoadView(context: Context, neighbors: List<Neighbor>, private val theme: Theme, regular: Typeface, bold: Typeface) : View(context) {
+class RoadView(
+    context: Context,
+    neighbors: List<Neighbor>,
+    private val theme: Theme,
+    regular: Typeface,
+    bold: Typeface,
+) : View(context) {
 
     var neighbors: List<Neighbor> = neighbors
         set(v) { field = v; invalidate() }
@@ -31,25 +40,26 @@ class RoadView(context: Context, neighbors: List<Neighbor>, private val theme: T
         set(v) { field = v; invalidate() }
 
     private val d = resources.displayMetrics.density
-    private val road = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = theme.roadBg }
-    private val edge = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = theme.roadEdge; strokeWidth = 3 * d }
+    private val road = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val edge = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = theme.roadEdge; strokeWidth = 2.5f * d; alpha = 190 }
     private val dash = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = theme.roadDash }
     private val body = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val glass = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#33000000") }
+    private val shade = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#55000000") }
+    private val glass = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#44000000") }
+    private val lampFront = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#FFF3C4") }
+    private val lampRear = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#FF5A4F") }
     private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 3.5f * d; color = theme.accent }
+    private val glowP = Paint(Paint.ANTI_ALIAS_FLAG)
     private val chip = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = theme.surface }
     private val chipSelected = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = theme.accent }
-    private val label = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        textSize = 13 * d; typeface = bold; color = theme.ink
-    }
+    private val chipBorder = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1f * d; color = theme.border }
+    private val label = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 13 * d; typeface = bold; color = theme.ink }
     private val sub = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 11 * d; typeface = regular; color = theme.muted }
     private val star = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#F5A524") }
-    private val liveP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        textSize = 11 * d; typeface = bold; color = theme.parked
-    }
+    private val liveP = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 11 * d; typeface = bold; color = theme.parked }
 
     // lane (0..2) and vertical position (0 = far ahead, 1 = behind us), in the order of the neighbour list
-    private val slots = listOf(0 to 0.50f, 2 to 0.22f, 2 to 0.64f, 1 to 0.10f, 0 to 0.80f, 1 to 0.40f)
+    private val slots = listOf(0 to 0.54f, 2 to 0.36f, 2 to 0.68f, 1 to 0.30f, 0 to 0.80f, 1 to 0.55f)   // clear of the chips on top
     private var scroll = 0f
     private val hits = mutableListOf<Pair<RectF, Neighbor>>()
 
@@ -72,6 +82,7 @@ class RoadView(context: Context, neighbors: List<Neighbor>, private val theme: T
         val w = width.toFloat(); val h = height.toFloat()
         val clip = Path().apply { addRoundRect(RectF(0f, 0f, w, h), 28 * d, 28 * d, Path.Direction.CW) }
         c.save(); c.clipPath(clip)
+        road.shader = LinearGradient(0f, 0f, 0f, h, theme.roadTop, theme.roadBottom, Shader.TileMode.CLAMP)
         c.drawRect(0f, 0f, w, h, road)
 
         val roadW = w * 0.86f
@@ -101,8 +112,7 @@ class RoadView(context: Context, neighbors: List<Neighbor>, private val theme: T
         neighbors.take(slots.size).forEachIndexed { i, n ->
             val (lane, yf) = slots[i]
             val cx = laneX(lane); val cy = h * yf
-            body.color = if (n.sameDest) theme.carSame else theme.carOther
-            car(c, cx, cy, cw, ch)
+            car(c, cx, cy, cw, ch, if (n.sameDest) theme.carSame else theme.carOther)
             val selected = n.id == selectedId
             if (selected) {
                 c.drawRoundRect(RectF(cx - cw / 2 - 5 * d, cy - ch / 2 - 5 * d, cx + cw / 2 + 5 * d, cy + ch / 2 + 5 * d), cw * 0.38f, cw * 0.38f, ring)
@@ -110,8 +120,11 @@ class RoadView(context: Context, neighbors: List<Neighbor>, private val theme: T
             tag(c, cx, cy - ch / 2f - 6 * d, n, selected)
             hits += RectF(cx - cw / 2 - 10 * d, cy - ch / 2 - 44 * d, cx + cw / 2 + 10 * d, cy + ch / 2 + 10 * d) to n
         }
-        body.color = theme.carMe
-        car(c, laneX(1), h * 0.80f, cw, ch)
+        // our car: a soft glow underneath
+        val mx = laneX(1); val my = h * 0.80f
+        glowP.shader = RadialGradient(mx, my, ch * 0.95f, theme.glow, Color.TRANSPARENT, Shader.TileMode.CLAMP)
+        c.drawCircle(mx, my, ch * 0.95f, glowP)
+        car(c, mx, my, cw, ch, theme.carMe)
         c.restore()
     }
 
@@ -127,11 +140,25 @@ class RoadView(context: Context, neighbors: List<Neighbor>, private val theme: T
 
     override fun performClick(): Boolean = super.performClick()
 
-    private fun car(c: Canvas, cx: Float, cy: Float, w: Float, h: Float) {
+    /** A car with a little depth: a shadow, a lighter roof, windscreens and lamps. */
+    private fun car(c: Canvas, cx: Float, cy: Float, w: Float, h: Float, color: Int) {
         val r = RectF(cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2)
+        c.drawRoundRect(RectF(r.left + 2 * d, r.top + 5 * d, r.right + 2 * d, r.bottom + 5 * d), w * 0.3f, w * 0.3f, shade)
+        body.shader = LinearGradient(r.left, r.top, r.right, r.bottom, lighten(color, 0.18f), color, Shader.TileMode.CLAMP)
         c.drawRoundRect(r, w * 0.3f, w * 0.3f, body)
+        body.shader = null
         c.drawRoundRect(RectF(r.left + w * 0.12f, r.top + h * 0.18f, r.right - w * 0.12f, r.top + h * 0.38f), 6 * d, 6 * d, glass)
         c.drawRoundRect(RectF(r.left + w * 0.12f, r.bottom - h * 0.26f, r.right - w * 0.12f, r.bottom - h * 0.12f), 6 * d, 6 * d, glass)
+        val lamp = 2.2f * d
+        c.drawRoundRect(RectF(r.left + w * 0.10f, r.top + 1.5f * d, r.left + w * 0.32f, r.top + 1.5f * d + lamp), lamp, lamp, lampFront)
+        c.drawRoundRect(RectF(r.right - w * 0.32f, r.top + 1.5f * d, r.right - w * 0.10f, r.top + 1.5f * d + lamp), lamp, lamp, lampFront)
+        c.drawRoundRect(RectF(r.left + w * 0.10f, r.bottom - 1.5f * d - lamp, r.left + w * 0.32f, r.bottom - 1.5f * d), lamp, lamp, lampRear)
+        c.drawRoundRect(RectF(r.right - w * 0.32f, r.bottom - 1.5f * d - lamp, r.right - w * 0.10f, r.bottom - 1.5f * d), lamp, lamp, lampRear)
+    }
+
+    private fun lighten(color: Int, f: Float): Int {
+        fun up(v: Int) = (v + (255 - v) * f).toInt().coerceIn(0, 255)
+        return Color.rgb(up(Color.red(color)), up(Color.green(color)), up(Color.blue(color)))
     }
 
     private fun drawStar(c: Canvas, cx: Float, cy: Float, r: Float) {
@@ -159,7 +186,8 @@ class RoadView(context: Context, neighbors: List<Neighbor>, private val theme: T
         // keep the tag inside the road card
         val shift = when { r.left < 6 * d -> 6 * d - r.left; r.right > width - 6 * d -> width - 6 * d - r.right; else -> 0f }
         r.offset(shift, 0f)
-        c.drawRoundRect(r, 10 * d, 10 * d, if (selected) chipSelected else chip)
+        c.drawRoundRect(r, 11 * d, 11 * d, if (selected) chipSelected else chip)
+        if (!selected) c.drawRoundRect(r, 11 * d, 11 * d, chipBorder)
         val fg = if (selected) Color.WHITE else null
         label.color = fg ?: theme.ink
         sub.color = fg ?: theme.muted
