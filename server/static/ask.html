@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#002c5f">
+<title>길동무 말로 질문 시험</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css">
+<style>
+  :root { --bg:#f1f3f6; --card:#fff; --ink:#0a1a33; --muted:#5b6b82; --navy:#002c5f; --accent:#00aad2; --green:#12b76a; --red:#f04438; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0a1220; --card:#141e31; --ink:#f2f5fa; --muted:#93a1b8; --accent:#35c2e8; } }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin:0; padding:max(18px, env(safe-area-inset-top)) 16px 28px; background:var(--bg); color:var(--ink);
+    font-family: Pretendard, -apple-system, "Malgun Gothic", sans-serif; }
+  .wrap { max-width: 480px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
+  h1 { margin: 4px 2px 0; font-size: 22px; color: var(--navy); } @media (prefers-color-scheme: dark) { h1 { color:#8cc8ff; } }
+  .card { background: var(--card); border-radius: 26px; padding: 18px; }
+  p { margin: 0; color: var(--muted); line-height: 1.55; font-size: 15px; }
+  .mic { width: 100%; padding: 22px; border: 0; border-radius: 22px; background: var(--navy); color: #fff; font: inherit; font-size: 20px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center; gap: 12px; cursor: pointer; }
+  .mic svg { width: 28px; height: 28px; fill: #fff; }
+  .mic.on { background: var(--accent); animation: blink 1.1s infinite; } @keyframes blink { 50% { opacity: .7; } }
+  .log { display: grid; gap: 10px; }
+  .row { padding: 12px 14px; border-radius: 16px; background: var(--bg); font-size: 15px; line-height: 1.5; }
+  .row b { display: block; font-size: 12px; color: var(--muted); margin-bottom: 2px; }
+  .ok { color: var(--green); font-weight: 700; } .bad { color: var(--red); font-weight: 700; }
+  .samples span { display: inline-block; margin: 4px 6px 0 0; padding: 6px 12px; border-radius: 999px; background: var(--bg); font-size: 14px; color: var(--ink); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>말로 질문 시험</h1>
+  <div class="card">
+    <p>앱을 설치하지 않고, 폰 마이크로 말해서 질문이 이웃에게 가는지 확인하는 시험 화면이에요. 이웃의 답이 오면 소리로 읽어 줘요. (운전 중에는 사용하지 마세요)</p>
+    <div class="samples" style="margin-top:10px"><span>“다음 휴게소 막혀?”</span><span>“근처에 맛집 있어?”</span><span>“앞에 무슨 일이야?”</span></div>
+  </div>
+  <button class="mic" id="mic" hidden>
+    <svg viewBox="0 0 24 24"><path d="M12,14c1.66,0 3,-1.34 3,-3V5c0,-1.66 -1.34,-3 -3,-3S9,3.34 9,5v6c0,1.66 1.34,3 3,3zM17.3,11c0,3 -2.54,5.1 -5.3,5.1S6.7,14 6.7,11H5c0,3.41 2.72,6.23 6,6.72V21h2v-3.28c3.28,-0.48 6,-3.3 6,-6.72h-1.7z"/></svg>
+    <span id="label">말로 질문</span>
+  </button>
+  <div class="card" id="warn" hidden><p id="warnText"></p></div>
+  <div class="log" id="log"></div>
+</div>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  var last = 0, primed = false, listening = false;
+
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function add(title, html) {
+    var d = document.createElement('div'); d.className = 'row'; d.innerHTML = '<b>' + title + '</b>' + html;
+    $('log').insertBefore(d, $('log').firstChild);
+  }
+  function speak(text) {
+    if (!('speechSynthesis' in window)) { add('소리', '<span class="bad">이 브라우저는 읽어 주기를 지원하지 않아요</span>'); return; }
+    var u = new SpeechSynthesisUtterance(text); u.lang = 'ko-KR'; u.rate = 1.0;
+    speechSynthesis.cancel(); speechSynthesis.speak(u);
+  }
+  function api(method, path, body) {
+    return fetch(path, { method: method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, status: r.status, json: j }; }); });
+  }
+
+  if (!Rec) { $('warn').hidden = false; $('warnText').textContent = '이 브라우저는 음성 인식을 지원하지 않아요. 안드로이드 크롬을 사용해 주세요.'; }
+  else if (!window.isSecureContext) {
+    $('warn').hidden = false;
+    $('warnText').textContent = '마이크는 보안 주소에서만 켜져요. 주소를 https://' + location.hostname + ':8443/ask 로 열어 주세요. (인증서 경고는 고급 → 계속)';
+  } else { $('mic').hidden = false; }
+
+  $('mic').onclick = function () {
+    if (listening) return;
+    var rec = new Rec(); rec.lang = 'ko-KR'; rec.interimResults = false; rec.maxAlternatives = 1;
+    listening = true; $('mic').classList.add('on'); $('label').textContent = '듣고 있어요…';
+    var stop = function () { listening = false; $('mic').classList.remove('on'); $('label').textContent = '말로 질문'; };
+    rec.onresult = function (e) {
+      var said = e.results[0][0].transcript;
+      add('내가 한 말', esc(said));
+      api('POST', '/api/send', { spoken: said, voice: true, gear: 'D', speed_kmh: 0 }).then(function (r) {
+        if (r.ok) { add('결과', '<span class="ok">알아들었어요</span> · 근처 이웃에게 물어봤어요'); }
+        else if (r.status === 422) { add('결과', '<span class="bad">질문으로 못 알아들었어요</span> · “다음 휴게소 막혀?”처럼 말해 보세요'); }
+        else { add('결과', '<span class="bad">' + esc(r.json.error || r.status) + '</span>'); }
+      });
+    };
+    rec.onerror = function (e) { add('마이크', '<span class="bad">음성 인식 오류: ' + esc(e.error) + '</span>'); stop(); };
+    rec.onend = stop; rec.start();
+  };
+
+  // answers coming back are read aloud
+  function poll() {
+    api('GET', '/api/inbox?vid=me&after=' + last).then(function (r) {
+      (r.json || []).forEach(function (m) {
+        last = Math.max(last, m.id);
+        if (!primed) return;   // skip history from before this page was opened
+        add((m.human ? '실제 이웃 ' : '') + m.from + '의 답', esc(m.text));
+        speak(m.text);
+      });
+      primed = true;
+    }).catch(function () {});
+  }
+  poll(); setInterval(poll, 1500);
+})();
+</script>
+</body>
+</html>

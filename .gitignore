@@ -27,3 +27,5 @@ shots/
 video/
 demo/work/
 build.log
+server/certs/
+server/static/*.apk

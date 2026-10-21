@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#002c5f">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icon.svg">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>길동무 이웃 차량</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css">
+<style>
+  :root {
+    --bg: #f1f3f6; --card: #fff; --ink: #0a1a33; --muted: #5b6b82; --line: #e1e5eb;
+    --navy: #002c5f; --accent: #00aad2; --accent-soft: #e0f4fa; --green: #12b76a; --amber: #f5a524; --red: #f04438;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0a1220; --card: #141e31; --ink: #f2f5fa; --muted: #93a1b8; --line: #26344d; --accent: #35c2e8; --accent-soft: #0f2f42; }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink);
+    font-family: Pretendard, -apple-system, "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; }
+  body { min-height: 100vh; padding: max(16px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom)); }
+  .wrap { max-width: 480px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
+  header { display: flex; align-items: center; justify-content: space-between; padding: 4px 2px; }
+  header b { font-size: 22px; color: var(--navy); letter-spacing: -0.02em; }
+  @media (prefers-color-scheme: dark) { header b { color: #8cc8ff; } }
+  .dot { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--muted); font-weight: 600; }
+  .dot i { width: 9px; height: 9px; background: var(--green); animation: blink 1.8s infinite; }   /* a square: the pixel motif */
+  .dot.off i { background: #98a2b3; animation: none; }
+  @keyframes blink { 50% { opacity: .35; } }
+  .card { background: var(--card); border-radius: 26px; padding: 18px; box-shadow: 0 1px 3px rgba(10,26,51,.08); }
+  h2 { margin: 0 0 4px; font-size: 20px; letter-spacing: -0.02em; }
+  p { margin: 0; color: var(--muted); line-height: 1.5; font-size: 15px; }
+  label.t { display: block; margin: 16px 0 6px; font-size: 13px; font-weight: 700; color: var(--muted); }
+  select { width: 100%; padding: 14px 14px; border-radius: 16px; border: 1.5px solid var(--line); font: inherit; font-size: 17px; background: var(--card); color: var(--ink); }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .swatches { display: flex; gap: 10px; flex-wrap: wrap; }
+  .sw { width: 40px; height: 40px; border-radius: 12px; border: 3px solid transparent; cursor: pointer; }
+  .sw.on { border-color: var(--ink); }
+  .preview { display: flex; align-items: center; gap: 14px; padding: 14px; border-radius: 20px; background: var(--accent-soft); margin-bottom: 4px; }
+  .avatar { flex: none; width: 52px; height: 52px; border-radius: 50%; color: #fff; display: grid; place-items: center; font-size: 22px; font-weight: 700; }
+  .toggle { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-top: 1px solid var(--line); font-size: 16px; font-weight: 600; }
+  .toggle:first-of-type { border-top: 0; }
+  .toggle input { appearance: none; width: 50px; height: 30px; border-radius: 15px; background: #cbd2dc; position: relative; transition: .2s; flex: none; }
+  .toggle input::after { content: ""; position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 50%; background: #fff; transition: .2s; }
+  .toggle input:checked { background: var(--accent); }
+  .toggle input:checked::after { left: 23px; }
+  .note { margin-top: 12px; font-size: 13px; color: var(--muted); line-height: 1.5; }
+  button { font: inherit; border: 0; cursor: pointer; }
+  .primary { width: 100%; margin-top: 18px; padding: 16px; border-radius: 18px; background: var(--navy); color: #fff; font-size: 18px; font-weight: 700; }
+  .primary:active { transform: scale(.98); }
+  .me { display: flex; align-items: center; gap: 14px; }
+  .me .name { font-size: 18px; font-weight: 700; }
+  .badge { display: inline-block; margin-top: 3px; padding: 3px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-size: 13px; font-weight: 700; }
+  .stats { margin-left: auto; text-align: right; font-size: 13px; color: var(--muted); line-height: 1.6; }
+  .stats b { color: var(--ink); font-size: 16px; }
+  .link { margin-top: 10px; background: none; color: var(--muted); font-size: 13px; font-weight: 700; padding: 2px 0; }
+  .wait { text-align: center; padding: 34px 18px; }
+  .pixels { display: flex; gap: 6px; justify-content: center; margin: 0 auto 16px; }
+  .pixels i { width: 14px; height: 14px; background: var(--accent); animation: px 1.2s infinite; }
+  .pixels i:nth-child(2) { animation-delay: .2s; } .pixels i:nth-child(3) { animation-delay: .4s; }
+  @keyframes px { 0%, 60%, 100% { opacity: .25; } 30% { opacity: 1; } }
+  .rest { margin-top: 16px; padding: 12px 18px; border-radius: 14px; background: var(--bg); color: var(--ink); font-size: 15px; font-weight: 700; }
+  .q small { color: var(--accent); font-weight: 700; font-size: 13px; }
+  .q h2 { font-size: 24px; margin: 4px 0 12px; }
+  .others { margin: 0 0 12px; padding: 12px 14px; border-radius: 16px; background: var(--bg); font-size: 14px; color: var(--muted); line-height: 1.6; }
+  .others b { color: var(--ink); }
+  .opts { display: grid; gap: 10px; }
+  .opts button { padding: 18px 16px; border-radius: 18px; background: var(--accent-soft); color: var(--ink); font-size: 18px; font-weight: 700; text-align: left; border: 1.5px solid transparent; }
+  .opts button:active { border-color: var(--accent); }
+  .mic { width: 100%; margin-top: 12px; padding: 16px; border-radius: 18px; background: var(--navy); color: #fff; font-size: 17px; font-weight: 700; display: flex; align-items: center; justify-content: center; gap: 10px; }
+  .mic svg { width: 22px; height: 22px; fill: #fff; }
+  .mic.on { background: var(--accent); animation: blink 1.2s infinite; }
+  .ghost { width: 100%; margin-top: 10px; padding: 14px; border-radius: 16px; background: transparent; color: var(--muted); font-size: 16px; font-weight: 700; border: 1.5px solid var(--line); }
+  .hint { margin-top: 10px; font-size: 13px; color: var(--muted); text-align: center; line-height: 1.5; }
+  .sent { text-align: center; padding: 26px 18px; }
+  .sent .ok { width: 54px; height: 54px; margin: 0 auto 12px; border-radius: 16px; background: #e7f8ef; color: var(--green); display: grid; place-items: center; font-size: 30px; }
+  .blocked h2 { color: var(--red); }
+  .toast { position: fixed; left: 16px; right: 16px; bottom: max(20px, env(safe-area-inset-bottom)); max-width: 448px; margin: 0 auto; padding: 16px 18px; border-radius: 18px;
+    background: var(--navy); color: #fff; font-weight: 700; text-align: center; transform: translateY(140%); transition: transform .35s ease; }
+  .toast.show { transform: none; }
+  .foot { text-align: center; font-size: 12px; color: #98a2b3; padding: 6px 0; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><b>길동무</b><span class="dot" id="conn"><i></i><span id="connText">연결 중</span></span></header>
+
+  <!-- profile: everything is chosen from lists, nothing is typed -->
+  <section class="card" id="profile">
+    <h2 id="pTitle">나의 이웃 프로필</h2>
+    <p>다른 운전자에게 보이는 모습이에요. 고르기만 하면 돼요.</p>
+    <div class="preview" style="margin-top:14px"><div class="avatar" id="pAv"></div><div><b id="pName" style="font-size:18px"></b><div class="note" style="margin:2px 0 0" id="pDest"></div></div></div>
+
+    <label class="t">이름</label>
+    <div class="row2"><select id="adj"></select><select id="ani"></select></div>
+    <label class="t">가는 곳</label>
+    <select id="dest"></select>
+    <label class="t">색</label>
+    <div class="swatches" id="sw"></div>
+
+    <label class="t">공개 범위</label>
+    <label class="toggle">차종 보이기 <input type="checkbox" id="shModel" checked></label>
+    <label class="toggle">가는 곳 보이기 <input type="checkbox" id="shDest" checked></label>
+    <label class="toggle">칭호 보이기 <input type="checkbox" id="shTitle" checked></label>
+    <div class="note">끈 항목은 다른 운전자에게 전혀 전달되지 않아요. 실제 위치는 공개되지 않고, 글자를 직접 입력하는 곳은 없어요.</div>
+    <button class="primary" id="go">이웃으로 참여하기</button>
+  </section>
+
+  <section id="main" hidden>
+    <div class="card me">
+      <div class="avatar" id="av">길</div>
+      <div><div class="name" id="myName"></div><span class="badge" id="myTitle"></span><br><button class="link" id="edit">프로필 바꾸기</button></div>
+      <div class="stats">도와줌 <b id="helped">0</b><br>고마워요 <b id="thanks">0</b></div>
+    </div>
+
+    <div class="card wait" id="wait">
+      <div class="pixels"><i></i><i></i><i></i></div>
+      <h2>근처 차량을 기다리는 중</h2>
+      <p>물어보는 차가 생기면 여기에 바로 나타나요.<br>화면을 켜 둔 채로 두세요.</p>
+      <button class="rest" id="rest">잠시 쉬기 · 질문 받지 않기</button>
+    </div>
+
+    <div class="card q" id="question" hidden>
+      <small id="qScope">근처 차량이 물어봐요</small>
+      <h2 id="qText"></h2>
+      <div class="others" id="others" hidden></div>
+      <div class="opts" id="opts"></div>
+      <button class="mic" id="mic" hidden>
+        <svg viewBox="0 0 24 24"><path d="M12,14c1.66,0 3,-1.34 3,-3V5c0,-1.66 -1.34,-3 -3,-3S9,3.34 9,5v6c0,1.66 1.34,3 3,3zM17.3,11c0,3 -2.54,5.1 -5.3,5.1S6.7,14 6.7,11H5c0,3.41 2.72,6.23 6,6.72V21h2v-3.28c3.28,-0.48 6,-3.3 6,-6.72h-1.7z"/></svg>
+        <span id="micLabel">말로 답하기</span>
+      </button>
+      <div class="hint" id="micHint" hidden></div>
+      <button class="ghost" id="skip">건너뛰기</button>
+    </div>
+
+    <div class="card sent blocked" id="blocked" hidden>
+      <h2>이웃 모드가 중지됐어요</h2>
+      <p>운전자의 신고가 접수되어 더 이상 질문이 오지 않아요.</p>
+    </div>
+
+    <div class="card sent" id="sent" hidden>
+      <div class="ok">✓</div>
+      <h2>답을 보냈어요</h2>
+      <p>도움이 되었다면 고마워요가 올 거예요.</p>
+    </div>
+  </section>
+
+  <div class="foot">운전 중에는 사용하지 마세요 · 실제 차량 위치는 공개되지 않아요</div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var vid = null, timer = null, current = null, sentTimer = null, paused = false, opts = null;
+  var profile = { adjective: '귀성길', animal: '곰', dest: '대구', color: '#00AAD2', show_model: true, show_dest: true, show_title: true };
+
+  function api(method, path, body) {
+    return fetch(path, { method: method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, status: r.status, json: j }; }); });
+  }
+  function setConn(on) { $('conn').className = 'dot' + (on ? '' : ' off'); $('connText').textContent = on ? '이웃 모드 켜짐' : '연결 끊김'; }
+  function toast(msg) { var t = $('toast'); t.textContent = msg; t.classList.add('show'); setTimeout(function () { t.classList.remove('show'); }, 3200); }
+  function show(which) { ['wait', 'question', 'sent', 'blocked'].forEach(function (id) { $(id).hidden = id !== which; }); }
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+
+  // ---------------- profile (choices only)
+  function fill(sel, list, value) {
+    sel.innerHTML = '';
+    list.forEach(function (v) { var o = document.createElement('option'); o.value = v; o.textContent = v; if (v === value) o.selected = true; sel.appendChild(o); });
+  }
+  function readForm() {
+    profile = { adjective: $('adj').value, animal: $('ani').value, dest: $('dest').value, color: profile.color,
+      show_model: $('shModel').checked, show_dest: $('shDest').checked, show_title: $('shTitle').checked };
+  }
+  function preview() {
+    readForm();
+    var name = profile.adjective + profile.animal;
+    $('pName').textContent = name; $('pAv').textContent = name.charAt(0); $('pAv').style.background = profile.color;
+    $('pDest').textContent = profile.dest + ' 가는 중' + (profile.show_dest ? '' : ' (비공개)');
+    Array.prototype.forEach.call($('sw').children, function (b) { b.classList.toggle('on', b.dataset.c === profile.color); });
+  }
+  function buildForm(o) {
+    opts = o;
+    var saved = JSON.parse(localStorage.getItem('gdm2') || 'null');
+    if (saved) profile = Object.assign(profile, saved);
+    fill($('adj'), o.adjectives, profile.adjective); fill($('ani'), o.animals, profile.animal); fill($('dest'), o.destinations, profile.dest);
+    $('shModel').checked = profile.show_model; $('shDest').checked = profile.show_dest; $('shTitle').checked = profile.show_title;
+    $('sw').innerHTML = '';
+    o.colors.forEach(function (c) {
+      var b = document.createElement('button'); b.className = 'sw'; b.style.background = c; b.dataset.c = c;
+      b.onclick = function () { profile.color = c; preview(); }; $('sw').appendChild(b);
+    });
+    ['adj', 'ani', 'dest', 'shModel', 'shDest', 'shTitle'].forEach(function (id) { $(id).onchange = preview; });
+    preview();
+  }
+
+  // ---------------- polling
+  function render(d) {
+    $('myName').textContent = d.me.nick;
+    $('av').textContent = d.me.nick.charAt(0); $('av').style.background = d.me.color || '#00aad2';
+    $('myTitle').textContent = d.me.title;
+    $('helped').textContent = d.me.helped; $('thanks').textContent = d.me.thanks;
+    if (d.thanks_new > 0) { toast('고마워요를 받았어요 · 도움이 됐어요'); }
+    if (d.blocked) { show('blocked'); return; }
+    paused = !!d.paused;
+    $('rest').textContent = paused ? '쉬는 중이에요 · 다시 질문 받기' : '잠시 쉬기 · 질문 받지 않기';
+    document.querySelector('#wait h2').textContent = paused ? '쉬는 중이에요' : '근처 차량을 기다리는 중';
+    if (d.pending.length) {
+      var q = d.pending[0];
+      $('qScope').textContent = q.scope === 'direct' ? '나에게만 온 질문' : '근처 모두에게 온 질문';
+      if (q.answers.length) {   // everyone sees what the others already said
+        $('others').hidden = false;
+        $('others').innerHTML = '먼저 답한 이웃<br>' + q.answers.map(function (a) { return '<b>' + esc(a.nick) + '</b> · ' + esc(a.label); }).join('<br>');
+      } else { $('others').hidden = true; }
+      if (!current || current.qid !== q.qid) {
+        current = q;
+        $('qText').textContent = q.text;
+        $('opts').innerHTML = '';
+        q.options.forEach(function (o) {
+          var b = document.createElement('button'); b.textContent = o.label; b.onclick = function () { answer(q.qid, { option: o.id }); }; $('opts').appendChild(b);
+        });
+        if (navigator.vibrate) navigator.vibrate(120);
+      }
+      clearTimeout(sentTimer); show('question');
+    } else if ($('sent').hidden) { current = null; show('wait'); }
+  }
+
+  function done() { current = null; show('sent'); clearTimeout(sentTimer); sentTimer = setTimeout(function () { show('wait'); }, 3500); }
+  function answer(qid, extra) {
+    api('POST', '/api/n/answer', Object.assign({ vid: vid, qid: qid }, extra)).then(function (r) {
+      if (r.status === 422) { toast('잘 못 알아들었어요. 버튼으로 눌러 주세요'); return; }
+      if (!r.ok) { toast('이미 다른 이웃들이 답했어요'); }
+      done();
+    });
+  }
+  function tick() {
+    api('GET', '/api/n/poll?vid=' + encodeURIComponent(vid)).then(function (r) {
+      if (r.status === 404) { join(); return; }   // server restarted: join again with the same profile
+      setConn(true); render(r.json);
+    }).catch(function () { setConn(false); });
+  }
+  function join() {
+    readForm();
+    localStorage.setItem('gdm2', JSON.stringify(profile));
+    api('POST', '/api/n/join', profile).then(function (r) {
+      vid = r.json.vid; $('profile').hidden = true; $('main').hidden = false; show('wait');
+      clearInterval(timer); tick(); timer = setInterval(tick, 1500);
+    });
+  }
+
+  $('go').onclick = function () {
+    if (vid) {   // editing: save and go back
+      readForm(); localStorage.setItem('gdm2', JSON.stringify(profile));
+      api('POST', '/api/n/profile', Object.assign({ vid: vid }, profile)).then(function () { $('profile').hidden = true; $('main').hidden = false; tick(); });
+    } else { join(); }
+  };
+  $('edit').onclick = function () { $('main').hidden = true; $('profile').hidden = false; $('pTitle').textContent = '프로필 바꾸기'; $('go').textContent = '저장하기'; };
+
+  // ---------------- answering by voice (needs https or localhost; the words are only ever mapped to the fixed answers)
+  var Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  var listening = false;
+  function setupMic() {
+    var hint = $('micHint');
+    if (Rec && window.isSecureContext) { $('mic').hidden = false; hint.hidden = true; }
+    else if (Rec) { hint.hidden = false; hint.textContent = '말로 답하려면 보안 주소(https)로 접속하세요. ' + location.hostname + ':8443/neighbor'; }
+  }
+  $('mic').onclick = function () {
+    if (listening || !current) return;
+    var qid = current.qid, rec = new Rec();
+    rec.lang = 'ko-KR'; rec.interimResults = false; rec.maxAlternatives = 1;
+    listening = true; $('mic').classList.add('on'); $('micLabel').textContent = '듣고 있어요…';
+    var stop = function () { listening = false; $('mic').classList.remove('on'); $('micLabel').textContent = '말로 답하기'; };
+    rec.onresult = function (e) { answer(qid, { spoken: e.results[0][0].transcript }); };
+    rec.onerror = function () { toast('음성 인식을 쓸 수 없어요. 버튼으로 눌러 주세요'); stop(); };
+    rec.onend = stop;
+    rec.start();
+  };
+  $('skip').onclick = function () {
+    if (!current) return;
+    var qid = current.qid; current = null; show('wait');
+    api('POST', '/api/n/skip', { vid: vid, qid: qid });
+  };
+  $('rest').onclick = function () { api('POST', '/api/n/pause', { vid: vid, paused: !paused }).then(tick); };
+
+  setupMic(); setConn(false);
+  api('GET', '/api/n/options').then(function (r) { buildForm(r.json); });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+{
+  "name": "길동무 이웃 차량",
+  "short_name": "길동무",
+  "start_url": "/neighbor",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#eef1f5",
+  "theme_color": "#002c5f",
+  "lang": "ko",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}
