@@ -96,7 +96,7 @@ class ApiClient(private val base: String = "http://10.0.2.2:8080") {
             val m = s.getJSONArray("menu")
             Shop(s.getString("id"), s.getString("name"), s.optString("brand", s.getString("name")), s.getString("place"),
                 s.getDouble("km"), s.getInt("eta_min"), s.getInt("wait_min"), s.getInt("cook_in_min"), s.getString("phone"),
-                (0 until m.length()).map { i -> m.getJSONObject(i).let { x -> MenuItem(x.getString("name"), x.getInt("price"), x.getString("kind")) } })
+                (0 until m.length()).map { i -> m.getJSONObject(i).let { x -> MenuItem(x.getString("name"), x.getInt("price"), x.getString("kind"), x.optBoolean("simple", true)) } })
         }
         val n = if (o.isNull("nearest")) null else o.getJSONObject("nearest")
         return ShopsView(o.getDouble("range_km"), shops, n?.getString("name"), n?.optDouble("km", 0.0) ?: 0.0, n?.optString("place"))

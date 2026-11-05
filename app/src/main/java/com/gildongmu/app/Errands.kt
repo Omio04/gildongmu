@@ -9,7 +9,7 @@ package com.gildongmu.app
  * Once the driver has marked brands as favourites, only those are offered (until they ask to see all again).
  * SAMPLE data and a mock payment: the shops are fictional and nothing is charged.
  */
-data class MenuItem(val name: String, val price: Int, val kind: String) {
+data class MenuItem(val name: String, val price: Int, val kind: String, val simple: Boolean = true) {
     fun priceText() = "%,d원".format(price)
 }
 
@@ -59,7 +59,8 @@ object Errands {
         view.shops.sortedBy { it.km }
             .filter { favourites.isEmpty() || it.brand in favourites }
             .mapNotNull { s ->
-                val item = if (key in ITEM_KINDS) s.menu.firstOrNull { it.kind == key } else if (s.place == key) s.menu.firstOrNull() else null
+                // the offer is a simple item (nothing to think about while driving); items with options are chosen by voice only
+                val item = if (key in ITEM_KINDS) s.menu.firstOrNull { it.kind == key && it.simple } else if (s.place == key) s.menu.firstOrNull { it.simple } else null
                 item?.let { Pick(s, it) }
             }.take(3)
 
@@ -94,7 +95,7 @@ object Errands {
     /** The sentence read to the driver for one offer (everything needed to say "결제" or "다른 곳"). */
     fun spoken(p: Pick): String =
         "가장 가까운 곳은 ${p.shop.place} ${p.shop.name}, ${"%.1f".format(p.shop.km)}킬로. ${p.item.name} ${p.item.priceText()}. " +
-            "${p.shop.etaMin}분 뒤 도착이라 맞춰 준비해요. 결제, 메뉴, 다른 곳, 단골, 취소 중에 말해 주세요"
+            "${p.shop.etaMin}분 뒤 도착이라 맞춰 준비해요. 결제할까요? 다른 메뉴를 원하면 메뉴라고 말해 주세요"
 
     /** A menu item the driver named ("아이스 라떼로"): matched by its first letters, or the whole name. */
     fun itemNamed(shop: Shop, spoken: String): MenuItem? {

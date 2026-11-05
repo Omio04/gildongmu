@@ -48,7 +48,7 @@ class ShopsTest(unittest.TestCase):
         got = [x for x in s.near(*HERE)["shops"] if x["id"] == sid]
         self.assertEqual(len(got), 1)
         self.assertEqual(got[0]["phone"], "031-555-0199")
-        self.assertEqual(got[0]["menu"], [{"name": "아메리카노", "price": 4000, "kind": "음료"}])
+        self.assertEqual(got[0]["menu"], [{"name": "아메리카노", "price": 4000, "kind": "음료", "simple": True}])
         s.register(shop(menu=[{"name": "라떼", "price": 5000, "kind": "음료"}]))   # same shop again: updated, not doubled
         again = [x for x in s.near(*HERE)["shops"] if x["id"] == sid]
         self.assertEqual([m["name"] for m in again[0]["menu"]], ["라떼"])

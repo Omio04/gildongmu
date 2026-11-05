@@ -483,11 +483,11 @@ class MainActivity : AppCompatActivity() {
     private fun lift(v: View, dp: Int = 2): View = v.apply { if (!t.night) elevation = dp(dp).toFloat() }
 
     /** The main action: a navy that deepens to the right (a flat block looks like a form, not a car). */
-    private fun hero() = GradientDrawable(
-        GradientDrawable.Orientation.LEFT_RIGHT,
-        if (t.night) intArrayOf(Color.parseColor("#1B66D1"), Color.parseColor("#2E8CF0"))
-        else intArrayOf(Color.parseColor("#002C5F"), Color.parseColor("#0B4E96")),
-    ).apply { cornerRadius = dp(CORNER).toFloat() }
+    /** The one filled main button of the screen: a single flat colour (no gradient: it carries no information). */
+    private fun hero() = GradientDrawable().apply {
+        setColor(if (t.night) Color.parseColor("#1B66D1") else Color.parseColor("#002C5F"))
+        cornerRadius = dp(CORNER).toFloat()
+    }
 
     /** A secondary button: the fill is reserved for the one action that matters on a card. */
     private fun outline() = GradientDrawable().apply {
@@ -1023,7 +1023,7 @@ class MainActivity : AppCompatActivity() {
         // otherwise the buttons at the bottom are pushed off the screen
         bannerCard.visibility = if (profileOpen || payOpen || pendingReport != null || order != null || hazard != null || heardText != null || nudge != null || pickedCar != null) View.GONE else View.VISIBLE
         answersCard.visibility = if (order != null || profileOpen || payOpen || hazard != null || heardText != null || nudge != null || pickedCar != null || pendingReport != null) View.GONE else View.VISIBLE   // the order or profile card replaces it: no empty squeezed card under it
-        stoppedArea.visibility = if (info.canSend && !profileOpen && !payOpen) View.VISIBLE else View.GONE   // editing the profile needs the room
+        stoppedArea.visibility = if (info.canSend && !profileOpen && !payOpen && order == null) View.VISIBLE else View.GONE   // editing the profile needs the room
     }
 
     /**
@@ -1552,20 +1552,23 @@ class MainActivity : AppCompatActivity() {
         attentionCard.addView(text("도착 ${s.etaMin}분 뒤 · " + (if (s.cookInMin > 0) "${s.cookInMin}분 뒤 조리 시작" else "바로 조리 시작") + " · ☎ ${s.phone}", 14f, t.muted, 1),
             LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(3) })
         attentionCard.addView(text(if (payToken() != null) "결제: ${payLabel()} · ${p.item.priceText()}" else "결제 수단을 등록하면 결제할 수 있어요 (정차 중에 등록해요)", 13f, t.muted, 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
-        if (s.menu.size > 1 && info.canSend && touchOk()) {   // another item of the same shop: one tap
-            val menuRow = LinearLayout(this)
-            s.menu.take(3).forEach { m ->
-                menuRow.addView(text(m.name, 14f, if (m == p.item) Color.WHITE else t.ink, 2).apply {
-                    gravity = Gravity.CENTER; maxLines = 1
+        if (s.menu.size > 1 && info.canSend && touchOk()) {
+            attentionCard.addView(text("메뉴", 13f, t.muted, 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(8) })
+            s.menu.take(4).forEach { m ->
+                val mr = LinearLayout(this).apply {
+                    gravity = Gravity.CENTER_VERTICAL
                     background = if (m == p.item) fill(t.navyFill, 10) else outline()
-                    setPadding(dp(4), dp(9), dp(4), dp(9))
+                    setPadding(dp(14), dp(12), dp(14), dp(12))
                     setOnClickListener { order = Pick(s, m); orderKey = java.util.UUID.randomUUID().toString(); renderAnswers() }; press(this)
-                }, LinearLayout.LayoutParams(0, -2, 1f).apply { if (menuRow.childCount > 0) leftMargin = dp(6) })
+                }
+                val fg = if (m == p.item) Color.WHITE else t.ink
+                mr.addView(text(m.name, 16f, fg, 2).apply { maxLines = 1 }, LinearLayout.LayoutParams(0, -2, 1f))
+                mr.addView(text(m.priceText(), 15f, fg, 1))
+                attentionCard.addView(mr, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
             }
-            attentionCard.addView(menuRow, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
         }
         if (!info.canSend || !touchOk()) {
-            attentionCard.addView(text("“결제”, “메뉴”, “다른 곳”, “단골”, “취소”라고 말해 주세요", 13f, t.muted), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) })
+            attentionCard.addView(text("“결제”라고 말하면 바로 주문해요 · 다른 메뉴는 “메뉴”", 13f, t.muted), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) })
             return
         }
         val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }

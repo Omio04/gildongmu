@@ -63,7 +63,7 @@ class ErrandsTest {
     fun `the spoken offer carries distance, item, price and the words to answer with`() {
         val p = Errands.picks(view, "음료").first()
         val s = Errands.spoken(p)
-        assertTrue("해뜰커피 DT" in s && "4,500원" in s && "결제" in s && "단골" in s)
+        assertTrue("해뜰커피 DT" in s && "4,500원" in s && "결제" in s && "메뉴" in s)   // pay by voice, or ask for the menu
     }
 
     @Test

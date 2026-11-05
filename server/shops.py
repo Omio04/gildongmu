@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS shops (
   id TEXT PRIMARY KEY, name TEXT NOT NULL, brand TEXT NOT NULL DEFAULT '', place TEXT NOT NULL, lat REAL NOT NULL, lon REAL NOT NULL,
   phone TEXT NOT NULL, wait_min INTEGER NOT NULL, registered_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS menu (
-  shop_id TEXT NOT NULL, pos INTEGER NOT NULL, name TEXT NOT NULL, price INTEGER NOT NULL, kind TEXT NOT NULL,
+  shop_id TEXT NOT NULL, pos INTEGER NOT NULL, name TEXT NOT NULL, price INTEGER NOT NULL, kind TEXT NOT NULL, simple INTEGER NOT NULL DEFAULT 1,
   PRIMARY KEY (shop_id, pos));
 CREATE TABLE IF NOT EXISTS orders (
   id INTEGER PRIMARY KEY AUTOINCREMENT, receipt TEXT NOT NULL, key TEXT UNIQUE, shop_id TEXT NOT NULL,
@@ -53,7 +53,7 @@ _ANCHOR = (37.41272, 127.09468)
 _SEED = [
     ("해뜰커피 DT", "드라이브스루", 2.1, 0.3, 3, "031-555-0101", [("아메리카노 1잔", 4500, "음료"), ("크로와상", 3800, "간식")], "해뜰커피"),
     ("해뜰커피 DT 북점", "드라이브스루", 4.0, -0.2, 3, "031-555-0109", [("아메리카노 1잔", 4500, "음료"), ("크로와상", 3800, "간식")], "해뜰커피"),
-    ("든든버거 DT", "드라이브스루", 3.0, -0.4, 4, "031-555-0102", [("치즈버거 세트", 7900, "식사"), ("콜라", 2000, "음료")]),
+    ("든든버거 DT", "드라이브스루", 3.0, -0.4, 4, "031-555-0102", [("콜라", 2000, "음료"), ("감자튀김", 2500, "간식"), ("치즈버거 세트", 7900, "식사", False)]),
     ("고소베이커리 DT", "드라이브스루", 4.5, 0.2, 2, "031-555-0103", [("소금빵 2개", 5200, "간식"), ("아이스 라떼", 4800, "음료")]),
     ("초록주유소 편의점", "편의점·주유", 3.8, 0.1, 1, "031-555-0104",
      [("생수 500ml", 1000, "음료"), ("샌드위치", 3800, "식사"), ("초코바", 1500, "간식")]),
@@ -115,6 +115,8 @@ class Shops:
             self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
         have = {r["name"] for r in self.db.execute("PRAGMA table_info(orders)")}
+        if "simple" not in {r["name"] for r in self.db.execute("PRAGMA table_info(menu)")}:
+            self.db.execute("ALTER TABLE menu ADD COLUMN simple INTEGER NOT NULL DEFAULT 1")
         for col, typ in ORDER_COLUMNS:
             if col not in have:
                 self.db.execute(f"ALTER TABLE orders ADD COLUMN {col} {typ}")
@@ -129,7 +131,7 @@ class Shops:
             lat = _ANCHOR[0] + north / 111.0
             lon = _ANCHOR[1] + east / (111.0 * math.cos(math.radians(_ANCHOR[0])))
             self.register({"name": name, "brand": rest[0] if rest else name, "place": place, "lat": lat, "lon": lon, "phone": phone, "wait_min": wait,
-                           "menu": [{"name": n, "price": p, "kind": k} for n, p, k in menu]})
+                           "menu": [{"name": m[0], "price": m[1], "kind": m[2], "simple": (m[3] if len(m) > 3 else True)} for m in menu]})
 
     # ------------------------------------------------------------ a shop registers itself
 
@@ -162,24 +164,24 @@ class Shops:
         items = []
         for m in menu:
             try:
-                iname, price, kind = str(m["name"]).strip(), int(m["price"]), str(m["kind"])
+                iname, price, kind, simple = str(m["name"]).strip(), int(m["price"]), str(m["kind"]), bool(m.get("simple", True))
             except (KeyError, TypeError, ValueError):
                 raise ShopError("menu item")
             if not 1 <= len(iname) <= 30 or not 0 < price <= 100000 or kind not in ITEM_KINDS:
                 raise ShopError("menu item")
-            items.append((iname, price, kind))
+            items.append((iname, price, kind, simple))
         sid = hashlib.sha1(f"{name}|{lat:.5f}|{lon:.5f}".encode("utf-8")).hexdigest()[:12]
         with self.db:
             self.db.execute("DELETE FROM menu WHERE shop_id=?", (sid,))
             self.db.execute("INSERT OR REPLACE INTO shops (id, name, brand, place, lat, lon, phone, wait_min, registered_at) VALUES (?,?,?,?,?,?,?,?,?)",
                             (sid, name, brand, place, lat, lon, phone, wait, self.clock()))
-            self.db.executemany("INSERT INTO menu VALUES (?,?,?,?,?)", [(sid, i, n, p, k) for i, (n, p, k) in enumerate(items)])
+            self.db.executemany("INSERT INTO menu (shop_id, pos, name, price, kind, simple) VALUES (?,?,?,?,?,?)", [(sid, i, n, p, k, 1 if sm else 0) for i, (n, p, k, sm) in enumerate(items)])
         return sid
 
     # ------------------------------------------------------------ the car asks
 
     def _menu(self, sid):
-        return [{"name": r["name"], "price": r["price"], "kind": r["kind"]}
+        return [{"name": r["name"], "price": r["price"], "kind": r["kind"], "simple": bool(r["simple"])}
                 for r in self.db.execute("SELECT * FROM menu WHERE shop_id=? ORDER BY pos", (sid,))]
 
     def _view(self, r, km):
