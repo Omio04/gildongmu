@@ -289,7 +289,6 @@ class MainActivity : AppCompatActivity() {
             override fun run() {
                 if (order == null && note == null && answers.isEmpty() && questions.isEmpty() && roadMessages.isEmpty()) refreshShops()   // the answer redraws the slot
                 trackActiveOrder()
-                maybeOffer()
                 ui.postDelayed(this, 10_000)
             }
         }, 10_000)
@@ -329,7 +328,6 @@ class MainActivity : AppCompatActivity() {
             }
             if (info2 != null) { forcedInfo = info2; onDriveInfo(info2) }
         }
-        if (intent.getBooleanExtra("offer_now", false)) maybeOffer(force = true)
         if (intent.hasExtra("probe_x")) {   // log which views lie under a screen point (to find what swallows a tap)
             val px = intent.getIntExtra("probe_x", 0); val py = intent.getIntExtra("probe_y", 0)
             fun walk(v: View, depth: Int) {
@@ -1444,7 +1442,6 @@ class MainActivity : AppCompatActivity() {
     private var routeEta: Int? = null                // minutes along the real route to the shop, once it is a waypoint
     private var activeShop: Shop? = null             // the shop of the order being followed (its position goes to the navigation)
     private var waypointAdded = false
-    private var lastOfferAt = 0L                     // the car offers by itself at most once in a while
     private var activeOrder: OrderReceipt? = null   // the order being made (paid), followed until it is picked up or cancelled
     private var lastOrderStatus = ""
     private var showAllShops = false                  // favourites are set, but the driver asked to see every shop for now
@@ -1789,31 +1786,6 @@ class MainActivity : AppCompatActivity() {
         val ok = navi?.addWaypoint(shop.lat, shop.lon, shop.name) == true
         if (ok) { waypointAdded = true; speak("${shop.name}을 내비 경유지에 넣었어요"); ui.postDelayed({ navi?.refreshWaypoint() }, 2_500) }
         else speak("지금은 경유지로 넣을 수 없어요")
-        renderAnswers()
-    }
-
-    /**
-     * What a phone app cannot do: the car offers by itself. When it has been stuck in traffic for a while (or the trip has
-     * 10-25 minutes left) and a shop is ahead, it asks once, by voice, and the answer is one word. Not while anything else
-     * is on screen, never while driving fast, and not again for 20 minutes. Needs a payment method on file (set up while stopped).
-     */
-    private fun maybeOffer(force: Boolean = false) {
-        if (!consented || payToken() == null) return
-        val now = System.currentTimeMillis()
-        if (!force && now - lastOfferAt < 20 * 60_000L) return
-        if (order != null || activeOrder != null || kindChooser || payOpen || profileOpen || hazard != null || heardText != null ||
-            nudge != null || pickedCar != null || pendingReport != null || questions.isNotEmpty()) return
-        val jammed = jamSince?.let { now - it >= 60_000L } == true && info.state != DriveState.MOVING
-        val left = trip?.remainMin
-        val onTheWay = left != null && left in 10..25
-        if (!force && !jammed && !onTheWay) return
-        val v = shopView ?: return
-        val pick = Errands.picks(v, "음료", activeFavs()).firstOrNull() ?: Errands.picks(v, "간식", activeFavs()).firstOrNull() ?: return
-        lastOfferAt = now
-        alts = listOf(pick); altIdx = 0
-        order = pick; orderKey = java.util.UUID.randomUUID().toString()
-        val why = if (jammed) "막혀서 서 있는 동안" else "가는 길에"
-        speakThen("$why ${pick.shop.name}이 ${pick.shop.etaMin}분 거리에 있어요. ${pick.item.name} ${pick.item.priceText()}, 주문할까요? 결제, 괜찮아요 중에 말해 주세요", "confirm")
         renderAnswers()
     }
 
