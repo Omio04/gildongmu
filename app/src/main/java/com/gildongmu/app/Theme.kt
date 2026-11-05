@@ -18,16 +18,16 @@ class Theme(val night: Boolean) {
     private fun c(day: String, nightHex: String) = Color.parseColor(if (night) nightHex else day)
 
     // surfaces
-    val bgTop = c("#F4F6F9", "#06090F")
-    val bgBottom = c("#EBEEF3", "#0A0F18")
+    val bgTop = c("#F7F8FA", "#06090F")
+    val bgBottom = c("#F2F4F7", "#0A0F18")
     val surface = c("#FFFFFF", "#111722")
-    val surfaceAlt = c("#EEF1F5", "#192130")
-    val border = c("#DCE1E8", "#222C3C")
+    val surfaceAlt = c("#F1F4F8", "#192130")
+    val border = c("#ECEFF2", "#222C3C")
 
     // text
-    val ink = c("#0B1B33", "#E6ECF5")
-    val muted = c("#3F4E64", "#B7C5D9")   // darker by day, lighter by night: small grey text must still read at a glance
-    val faint = c("#6B7A90", "#8696AD")
+    val ink = c("#0F172A", "#E6ECF5")
+    val muted = c("#4B5563", "#B7C5D9")   // darker by day, lighter by night: small grey text must still read at a glance
+    val faint = c("#6B7280", "#8696AD")
 
     // brand
     val primary = c("#002C5F", "#A8D2FF")       // headings and chips (on dark: a light tint so it stays readable)
@@ -44,14 +44,14 @@ class Theme(val night: Boolean) {
     val heart = c("#E5446D", "#FF7A9C")
 
     // road: lighter asphalt with white lanes by day, almost black with dim lanes by night
-    val roadTop = c("#737C8A", "#04070C")
-    val roadBottom = c("#5E6674", "#0D141F")
-    val roadEdge = c("#FFFFFF", "#5A6E8D")
-    val roadDash = c("#E9EEF5", "#33445F")
-    val carMe = c("#E3E8EF", "#DCE3EE")          // silver: our own car
+    val roadTop = c("#FAFCFE", "#04070C")
+    val roadBottom = c("#F1F5FA", "#0D141F")
+    val roadEdge = c("#D5DEE9", "#5A6E8D")
+    val roadDash = c("#C3D0DE", "#33445F")
+    val carMe = c("#FFFFFF", "#DCE3EE")          // silver: our own car
     val carSame = c("#00A8E0", "#2DB4F5")
     val carOther = c("#262D38", "#1A212C")     // dark graphite, glossy: the quiet default
-    val carLive = c("#1480C4", "#2796E0")      // a real person: a deep Active Blue, the brand colour, at all times
+    val carLive = c("#002C5F", "#2796E0")      // a real person: a deep Active Blue, the brand colour, at all times
     val glow = c("#3300A8E0", "#6635C4F3")
 
     companion object {

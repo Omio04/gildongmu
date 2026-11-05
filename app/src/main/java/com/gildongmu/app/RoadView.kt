@@ -88,6 +88,7 @@ class RoadView(
 
     // cars
     private val body = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val carEdge = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1.5f * d; color = Color.parseColor("#C3D0DE") }
     private val glassP = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#33000000") }
     private val glowP = Paint(Paint.ANTI_ALIAS_FLAG)
     private val ripple = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 2.5f * d; color = theme.accent }
@@ -148,8 +149,12 @@ class RoadView(
 
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
         clip = Path().apply { addRoundRect(RectF(0f, 0f, w.toFloat(), h.toFloat()), 22 * d, 22 * d, Path.Direction.CW) }
-        shoulder.color = if (theme.night) darken(theme.roadTop, 0.42f) else lighten(theme.roadTop, 0.55f)
-        road.shader = LinearGradient(0f, 0f, 0f, h.toFloat(), ROAD_TOP, ROAD_BOTTOM, Shader.TileMode.CLAMP)   // slightly lighter far ahead
+        // night: the dark road of the video design. Day: a light road with grey-blue dashed lanes, white cars outlined, real neighbours in navy
+        shoulder.color = if (theme.night) darken(theme.roadTop, 0.42f) else Color.parseColor("#E7ECF3")
+        edge.color = if (theme.night) Color.parseColor("#E6EAF0") else theme.roadEdge
+        dash.color = if (theme.night) Color.parseColor("#8A94A6") else theme.roadDash
+        road.shader = if (theme.night) LinearGradient(0f, 0f, 0f, h.toFloat(), ROAD_TOP, ROAD_BOTTOM, Shader.TileMode.CLAMP)   // slightly lighter far ahead
+            else LinearGradient(0f, 0f, 0f, h.toFloat(), theme.roadTop, theme.roadBottom, Shader.TileMode.CLAMP)
     }
 
     override fun onDraw(c: Canvas) {
@@ -233,7 +238,8 @@ class RoadView(
             val fade = (age / APPEAR_MS.toFloat()).coerceIn(0f, 1f)
             if (fade < 1f) c.saveLayerAlpha(cx - ch, cy - ch, cx + ch, cy + ch, (fade * 255).toInt())
             // blue = a real person on the app, light grey = a simulated car; a car that answered also gets a blue halo
-            car(c, cx, cy, cw, ch, if (n.live) CAR_BLUE else CAR_GREY, halo = said != null)
+            car(c, cx, cy, cw, ch,
+                if (theme.night) (if (n.live) CAR_BLUE else CAR_GREY) else (if (n.live) theme.carLive else theme.carOther), halo = said != null)
             if (fade < 1f) c.restore()
             if (fade < 1f) {   // a car that just joined: a green ring spreads from it once
                 onRing.color = theme.accent; onRing.strokeWidth = 2.5f * d; onRing.alpha = ((1f - fade) * 200).toInt()
@@ -377,6 +383,7 @@ class RoadView(
         body.shader = LinearGradient(r.left, r.top, r.right, r.bottom, lighten(color, 0.22f), darken(color, 0.14f), Shader.TileMode.CLAMP)
         c.drawRoundRect(r, w * 0.3f, w * 0.3f, body)
         body.shader = null
+        if (!theme.night) c.drawRoundRect(r, w * 0.3f, w * 0.3f, carEdge)   // a light road needs an outline: a white car must not disappear
         c.drawRoundRect(RectF(r.left + w * 0.12f, r.top + h * 0.18f, r.right - w * 0.12f, r.top + h * 0.38f), 6 * d, 6 * d, glassP)
         c.drawRoundRect(RectF(r.left + w * 0.12f, r.bottom - h * 0.26f, r.right - w * 0.12f, r.bottom - h * 0.12f), 6 * d, 6 * d, glassP)
     }
