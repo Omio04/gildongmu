@@ -987,8 +987,10 @@ class MainActivity : AppCompatActivity() {
         // Answers never take over the screen: they appear in the card at the bottom, and the controls stay where they are.
         // The tall cards (my profile, the report reasons) take the board's place so that nothing is pushed off the screen.
         // the pickup list and the order card need the room: the report banner steps aside while they are open
-        bannerCard.visibility = if (profileOpen || pendingReport != null || order != null) View.GONE else View.VISIBLE
-        answersCard.visibility = if (order != null || profileOpen) View.GONE else View.VISIBLE   // the order or profile card replaces it: no empty squeezed card under it
+        // any big card in the top slot (a report, a sentence to confirm, an offer, an order, a picked car, the profile) takes the room of the banner:
+        // otherwise the buttons at the bottom are pushed off the screen
+        bannerCard.visibility = if (profileOpen || pendingReport != null || order != null || hazard != null || heardText != null || nudge != null || pickedCar != null) View.GONE else View.VISIBLE
+        answersCard.visibility = if (order != null || profileOpen || hazard != null || heardText != null || nudge != null || pickedCar != null || pendingReport != null) View.GONE else View.VISIBLE   // the order or profile card replaces it: no empty squeezed card under it
         stoppedArea.visibility = if (info.canSend && !profileOpen) View.VISIBLE else View.GONE   // editing the profile needs the room
     }
 
@@ -1063,7 +1065,7 @@ class MainActivity : AppCompatActivity() {
         head.addView(badge(R.drawable.ic_warning, t.moving, 20), LinearLayout.LayoutParams(dp(38), dp(38)).apply { rightMargin = dp(12) })
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         col.addView(text(if (hazardByDriver) "${p.title}, 촬영하고 신고할까요?" else "앞에 ${p.title}이 감지됐어요", 22f, t.ink, 2))
-        col.addView(text("위치${if (hazardPhoto != null) "·사진" else ""}과 함께 신고돼요 · 근처 이웃에게도 알려요", 14f, t.muted), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
+        col.addView(text(if (hazardPhoto != null) "위치와 사진이 함께 신고돼요 · 근처 이웃에게도 알려요" else "위치와 함께 신고돼요 · 근처 이웃에게도 알려요", 14f, t.muted), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
         head.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
         attentionCard.addView(head)
         if (hazardFailed) {

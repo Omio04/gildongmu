@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS orders (
 """
 
 # columns added later: an older shops.db is upgraded in place
-ORDER_COLUMNS = [("first_eta", "INTEGER"), ("car_lat", "REAL"), ("car_lon", "REAL"), ("updated_at", "REAL"), ("payment", "TEXT")]
+ORDER_COLUMNS = [("first_eta", "INTEGER"), ("car_lat", "REAL"), ("car_lon", "REAL"), ("updated_at", "REAL"), ("payment", "TEXT"), ("payment_id", "TEXT")]
 
 # an order's life: the shop moves it forward, the car may cancel while the shop has not started cooking
 STATUS_LABEL = {"placed": "접수됨", "accepted": "가게가 수락했어요", "cooking": "조리 중", "ready": "준비 완료",
@@ -68,6 +68,28 @@ class ShopError(Exception):
     pass
 
 
+class PaymentError(Exception):
+    pass
+
+
+class MockPaymentProvider:
+    """The one place that would talk to a payment company (토큰·빌링키 승인, 환불). This one is a MOCK: it approves any token
+    except one that starts with "tok_declined" (to show a refusal), charges nothing, and remembers what it was asked to refund.
+    A real provider replaces this class: authorize(token, amount, key) -> {"id"} and refund(payment_id)."""
+
+    def __init__(self):
+        self.refunded = []
+
+    def authorize(self, token, amount, key=None):
+        if token.startswith("tok_declined"):
+            raise PaymentError("declined")
+        return {"id": "pay_" + hashlib.sha1(f"{token}|{amount}|{key}".encode("utf-8")).hexdigest()[:10]}
+
+    def refund(self, payment_id):
+        self.refunded.append(payment_id)
+        return True
+
+
 def distance_km(lat1, lon1, lat2, lon2):
     p1, p2 = math.radians(lat1), math.radians(lat2)
     a = math.sin((p2 - p1) / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(math.radians(lon2 - lon1) / 2) ** 2
@@ -80,8 +102,9 @@ def eta_min(km):
 
 
 class Shops:
-    def __init__(self, store=None, clock=time.time, seed=True):
+    def __init__(self, store=None, clock=time.time, seed=True, payments=None):
         self.clock = clock
+        self.payments = payments or MockPaymentProvider()
         path = ":memory:"
         if store is not None:
             Path(store).mkdir(parents=True, exist_ok=True)
@@ -196,12 +219,16 @@ class Shops:
             raise ShopError("too far")
         eta = eta_min(km)
         now = self.clock()
+        try:
+            pay = self.payments.authorize(payment_token, m["price"], key)   # the price is the shop's menu price, never the car's
+        except PaymentError:
+            raise ShopError("payment declined")
         with self.db:
             cur = self.db.execute(
                 "INSERT INTO orders (receipt, key, shop_id, item, price, vehicle, eta_min, cook_in_min, created_at, status,"
-                " first_eta, car_lat, car_lon, updated_at, payment) VALUES ('', ?,?,?,?,?,?,?,?,'placed',?,?,?,?,?)",
+                " first_eta, car_lat, car_lon, updated_at, payment, payment_id) VALUES ('', ?,?,?,?,?,?,?,?,'placed',?,?,?,?,?,?)",
                 (key, shop_id, m["name"], m["price"], vehicle, eta, max(0, eta - r["wait_min"]), now, eta, lat, lon, now,
-                 f"모의 결제 · 결제 토큰 {payment_token[:8]}…"))
+                 f"모의 결제 · {pay['id']}", pay["id"]))
             self.db.execute("UPDATE orders SET receipt=? WHERE id=?", (f"D-{1000 + cur.lastrowid}", cur.lastrowid))
         return self._order_view(self.db.execute("SELECT * FROM orders WHERE id=?", (cur.lastrowid,)).fetchone())
 
@@ -218,6 +245,7 @@ class Shops:
         return {"ok": True, "receipt": o["receipt"], "shop": r["name"], "phone": r["phone"], "item": o["item"], "price": o["price"],
                 "eta_min": o["eta_min"], "first_eta_min": first, "delay_min": delay, "cook_in_min": o["cook_in_min"],
                 "status": o["status"], "status_label": STATUS_LABEL.get(o["status"], o["status"]),
+                "refunded": o["status"] == "cancelled" and bool(o["payment_id"]),
                 "payment": o["payment"] or PAYMENT,
                 "start_cooking_now": o["status"] in ("placed", "accepted") and o["cook_in_min"] <= 0,
                 "shop_can": list(SHOP_NEXT.get(o["status"], ())), "car_can_cancel": o["status"] in CAR_CAN_CANCEL}
@@ -239,6 +267,8 @@ class Shops:
         o = self._row(receipt)
         if status not in SHOP_NEXT.get(o["status"], ()):
             raise ShopError("bad transition")
+        if status == "cancelled" and o["payment_id"]:
+            self.payments.refund(o["payment_id"])   # the shop declined: the money goes back
         with self.db:
             self.db.execute("UPDATE orders SET status=?, updated_at=? WHERE id=?", (status, self.clock(), o["id"]))
         return self._order_view(self._row(receipt))
@@ -248,6 +278,8 @@ class Shops:
         o = self._row(receipt)
         if o["status"] not in CAR_CAN_CANCEL:
             raise ShopError("cannot cancel")
+        if o["payment_id"]:
+            self.payments.refund(o["payment_id"])   # cancelled before cooking: a full refund
         with self.db:
             self.db.execute("UPDATE orders SET status='cancelled', updated_at=? WHERE id=?", (self.clock(), o["id"]))
         return self._order_view(self._row(receipt))

@@ -86,6 +86,24 @@ class ShopsTest(unittest.TestCase):
                 s.order(x["id"], x["menu"][0]["name"], "me", *HERE, payment_token=bad)
         self.assertEqual(s.orders_for(x["id"]), [])
 
+    def test_the_payment_provider_decides_and_a_decline_makes_no_order(self):
+        s = fresh()
+        x = s.near(*HERE)["shops"][0]
+        with self.assertRaises(sh.ShopError) as cm:
+            s.order(x["id"], x["menu"][0]["name"], "me", *HERE, payment_token="tok_declined1")
+        self.assertEqual(str(cm.exception), "payment declined")
+        self.assertEqual(s.orders_for(x["id"]), [])   # nothing was recorded for the shop
+
+    def test_a_cancelled_order_is_refunded_by_the_provider(self):
+        s = fresh()
+        _, o = self._placed(s)
+        done = s.cancel(o["receipt"])
+        self.assertTrue(done["refunded"])
+        self.assertEqual(len(s.payments.refunded), 1)
+        _, o2 = self._placed(s)
+        s.set_status(o2["receipt"], "cancelled")   # the shop declines it
+        self.assertEqual(len(s.payments.refunded), 2)
+
     def test_an_order_for_an_unknown_item_or_a_far_shop_is_refused(self):
         s = fresh()
         x = s.near(*HERE)["shops"][0]
