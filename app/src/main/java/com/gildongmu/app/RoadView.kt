@@ -69,7 +69,7 @@ class RoadView(
     /** Kept so the screen can tell the road about the driving state. */
     var moving: Boolean = false
 
-    /** The lane marks flow: in every state except parked (stopped in D flows like driving, at the same pace). */
+    /** The lane marks flow at one steady pace; the screen sets it true in every driving state, parked included. */
     var flowing: Boolean = false
 
     /** Vehicle speed; the lane marks scroll in proportion (0 = standing still, the road still inches along). */

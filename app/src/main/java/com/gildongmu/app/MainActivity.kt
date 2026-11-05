@@ -1938,7 +1938,7 @@ class MainActivity : AppCompatActivity() {
         renderState()
         val moving = info.state == DriveState.MOVING
         road.moving = moving
-        road.flowing = info.state != DriveState.PARKED
+        road.flowing = true   // the road always flows at the same pace, parked or not
         road.speedKmh = if (info.state == DriveState.PARKED) 0f else (info.speedKmh ?: 0f).coerceAtLeast(if (jamSince != null) 4f else 0f)
 
         // only if the vehicle forbids touching altogether do the buttons give way to the big voice screen
