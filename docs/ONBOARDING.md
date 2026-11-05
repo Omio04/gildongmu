@@ -37,7 +37,12 @@
 git clone https://github.com/Omio04/gildongmu.git
 cd gildongmu
 ```
-Python 3.12와 Android Studio(Pleos Connect 에뮬레이터, API 34)가 필요합니다. Python 패키지 설치는 없습니다.
+Python 3.12와 Android Studio가 필요합니다. Python 패키지 설치는 없습니다.
+
+**에뮬레이터는 일반 안드로이드 에뮬레이터가 아니라 공모전용 차량 에뮬레이터를 씁니다.**
+- 설치는 공모전 공식 가이드(<https://appdevchallenge.auto-hmg.io>, Pleos Playground)대로 합니다. 이 저장소에는 설치 순서가 없습니다.
+- 이 프로젝트가 쓰는 이미지는 **`Pleos Connect v2.1.0 APIs`**(android-34, `pleos_car_emulator`)입니다. 에뮬레이터 이름은 `Automotive_1408p_landscape`(1408p 가로)였습니다. 일반 폰용 에뮬레이터에서는 내비·차량 기능(Pleos SDK)이 동작하지 않을 수 있습니다.
+- 앱이 쓰는 Pleos 라이브러리는 `https://nexus-playground.pleos.ai/repository/maven-releases/`에서 받아 오며, 주소는 `settings.gradle.kts`에 이미 들어 있습니다(접근에 계정이 필요한지는 확인하지 못했습니다).
 
 **터미널 3개를 씁니다.** (VS Code: `` Ctrl+` `` 로 열고 `+` 버튼으로 추가)
 
