@@ -2,24 +2,104 @@
 
 2026-11-05 기준. 코드와 실행으로 확인한 것만 적었고, 확인 못 한 것은 "확인 못 함"이라고 적었습니다.
 
+## 0. 이 문서 읽는 순서 (30분)
+| 순서 | 읽을 것 | 얻는 것 |
+|---|---|---|
+| 1 | 이 문서 1번(한 문장)과 2번(규칙) | 앱이 무엇이고, 무엇을 일부러 안 했는지 |
+| 2 | 아래 2번을 따라 **앱을 실제로 돌려 보기** | 눈으로 먼저 보고 코드를 읽으면 빠릅니다 |
+| 3 | 3번(기능 ↔ 파일 지도)과 4번(구조) | 고칠 곳 찾기 |
+| 4 | `README.md` | 공모전 설명용 전체 소개(기능 상세) |
+| 5 | 필요할 때: `docs/PICKUP_PAYMENT.md`(가게·결제), `docs/PERMISSIONS.md`(권한·개인정보), `docs/DEMO.md`(시연 순서), `docs/ARCHITECTURE.md`(개발 순서 기록) | 해당 기능 깊이 |
+
 ## 1. 앱을 한 문장으로
 **막힌 길에서 근처 차에게 묻고 알리고 도움받는 차량용 앱(주 기능).** 덤으로 가까운 가게를 말로 묻고 메뉴·가격을 듣고 결제까지 하는 기능이 있습니다(부가 기능).
-- 주행 중에는 터치를 막고 음성으로, 정차 중에는 터치도 됩니다. 이웃 차는 실제로 접속한 차만 화면에 나옵니다.
-- **가게·결제는 샘플·모의입니다.** 실제 결제도 가게 전달도 없습니다.
 
-## 2. 10분 안에 실행해 보기 (개발자)
-1. **서버:** `python server/app_server.py 8080` (패키지 설치 없음, Python 3.12). 켜면 터미널에 **가게 열쇠**가 한 줄 나옵니다.
-2. **에뮬레이터:** Android Studio에서 Pleos Connect 에뮬레이터(API 34)를 켭니다. 앱은 서버를 `10.0.2.2:8080`으로 봅니다.
-3. **앱 설치:** `adb install -r --user 10 apk/이정준_길동무_release.apk` 후 `adb shell am start --user 10 -n com.gildongmu.app/.MainActivity`. (이 에뮬레이터는 앱을 **사용자 10번**으로 실행합니다.)
-4. **이웃 한 대 붙이기:** `python tools/neighbor_demo.py --north-m 60 --answer` (폰 브라우저 `http://<PC>:8080/neighbor`도 같은 역할)
-5. **가게 화면:** `http://localhost:8080/shop` (가게 열쇠 입력)
-6. **테스트:** `python -m unittest discover -s tests` (서버), `./gradlew :app:testDebugUnitTest` (앱). 둘 다 통과해야 합니다.
-7. **디버그 빌드 전용 시험 옵션:** 말한 글자 넣기 `adb shell am broadcast -a com.gildongmu.app.DEBUG -p com.gildongmu.app --es say "'커피 마시고 싶어'"`, 주행 상태 `--es force_state moving`, 위치 `--ef fake_lat 37.9 --ef fake_lon 127.5` (자세한 것은 README).
+### 기능 한눈에
+| 기능 | 하는 일 |
+|---|---|
+| 이웃 차 보기 | 도로 화면에 반경 약 300m의 앱 사용 차가 나옵니다. 실제로 접속한 차만 나옵니다. |
+| 질문 | "왜 막혀요?"(주변 모두), 차를 눌러 **그 차에게만**(준비된 질문 4개 터치 또는 "말로 묻기"), 홈 "말로 묻기"(마이크) |
+| 위험 신고 | 사고·낙하물·로드킬·공사 중, 사진 한 장 |
+| 가는 길 픽업·결제(모의) | "음성으로 주문·결제" 터치 또는 말 → "무엇을 주문하시겠어요?" → 가게·메뉴 읽어 주기(가격은 옆 화면에 계속 표시) → "결제할게" → 결제 창 → "결제". 터치의 **결제하기 버튼은 바로 주문**됩니다. |
+| 주문 뒤 | 상태를 따라가며 말해 줍니다. "경유지"라고 하면 내비 길에 가게를 넣습니다. |
+| 주행·정차 | 주행 중에는 터치를 막고 음성으로, 정차·주차 중에는 터치도 됩니다. |
 
-## 3. 구조 (실제 파일 기준)
+### 일부러 정한 규칙 (바꾸기 전에 팀에 물어보세요)
+- **앱이 먼저 말을 걸지 않습니다.** 정체 때 "물어볼까요?"나 "주문할까요?" 같은 제안 카드는 뺐습니다. 말하거나 눌러야만 열립니다.
+- **결제한 주문은 취소·환불이 없습니다.** 바로 조리에 들어가기 때문입니다(문의는 가게 전화). 서버에 취소 처리 코드는 남아 있지만 앱은 부르지 않습니다.
+- **음성 결제는 두 단계**(말하면 결제 창 → 한 번 더 "결제"). 잘못 알아듣고 돈이 나가지 않게 하려는 것입니다. 터치 결제하기는 한 번입니다.
+- **도로 차선은 주차·정차·주행 모두 같은 속도로 흐릅니다.** 값은 `RoadView.kt`의 `CRUISE_PX_PER_SEC`.
+- **가게·결제는 샘플·모의입니다.** 실제 결제도 가게 전달도 없습니다. 가게·가격·전화번호는 지어낸 값입니다.
+
+## 2. 실행해 보기 (개발자, 10분)
+처음 한 번만:
+```
+git clone https://github.com/Omio04/gildongmu.git
+cd gildongmu
+```
+Python 3.12와 Android Studio(Pleos Connect 에뮬레이터, API 34)가 필요합니다. Python 패키지 설치는 없습니다.
+
+**터미널 3개를 씁니다.** (VS Code: `` Ctrl+` `` 로 열고 `+` 버튼으로 추가)
+
+| 터미널 | 명령 | 하는 일 |
+|---|---|---|
+| ① 서버 | `python server/app_server.py 8080` | 서버를 켭니다. 켜진 동안 계속 둡니다. **가게 열쇠**가 한 줄 나옵니다(`server/data/shop_key.txt`에도 저장). 처음 켜면 에뮬레이터 위치 주변 샘플 가게가 자동으로 들어갑니다. |
+| ② 앱 | 아래 | 앱을 빌드해 에뮬레이터에 올립니다. |
+| ③ 이웃 | `python tools/neighbor_demo.py --north-m 80 --answer` | 가짜 이웃 차 한 대(2분간). `Ctrl+C`로 끝. 질문은 **버튼 질문만** 받습니다. |
+
+**② 앱 올리기 (Windows, Git Bash 기준)**
+```
+export JAVA_HOME="/c/Program Files/Android/Android Studio/jbr"
+./gradlew :app:assembleDebug
+adb install -r --user 10 app/build/outputs/apk/debug/app-debug.apk
+adb shell am start --user 10 -n com.gildongmu.app/.MainActivity
+```
+- 이 에뮬레이터는 앱을 **사용자 10번**으로 돌려서 `--user 10`이 꼭 필요합니다.
+- 앱은 서버를 `10.0.2.2:8080`으로 봅니다(에뮬레이터 → 내 PC).
+- 빌드 없이 보려면 `apk/이정준_길동무_release.apk`를 설치해도 됩니다(최신이 아닐 수 있음).
+- 처음 켜면 소개 → 동의 → 프로필 → 결제수단 등록 화면이 나옵니다. 결제 시험은 모의 카드 등록까지 해야 됩니다.
+
+**가게 화면(웹):** 브라우저에서 `http://localhost:8080/shop` → 가게 열쇠 입력. 주문이 들어오면 수락 → 조리 시작 → 준비 완료 → 수령으로 눌러 보세요(앱이 말로 알려 줍니다).
+**폰 이웃:** 같은 Wi-Fi 폰 브라우저에서 `http://<PC주소>:8080/neighbor`(서버 시작 때 주소가 출력됩니다).
+
+**테스트(합치기 전에 둘 다 통과해야 합니다)**
+```
+python -m unittest discover -s tests          # 서버 119개
+./gradlew :app:testDebugUnitTest              # 앱
+```
+
+**말·상태를 손으로 넣어 보기 (디버그 빌드 전용)** — 마이크 없이 시험할 때
+```
+# 말한 것처럼 글자 넣기 (따옴표 안에 작은따옴표)
+adb shell am broadcast --user 10 -a com.gildongmu.app.DEBUG -p com.gildongmu.app --es say "'근처 해뜰커피 있나'"
+# 주행 상태 바꾸기: parked / idling / moving
+adb shell am broadcast --user 10 -a com.gildongmu.app.DEBUG -p com.gildongmu.app --es force_state moving
+# 위치 바꾸기(가게 범위 시험)
+adb shell am broadcast --user 10 -a com.gildongmu.app.DEBUG -p com.gildongmu.app --ef fake_lat 37.9 --ef fake_lon 127.5
+# 화면 캡처
+adb exec-out screencap -p > 이름.png
+```
+**해 볼 만한 시나리오**
+1. 홈에서 "음성으로 주문·결제" 터치 → (디버그) `say "'커피 주변 알려줘'"` → `say "'얼마야'"` → `say "'결제할게'"` → `say "'결제'"` → 가게 화면에서 주문 진행.
+2. `force_state moving`으로 바꿔 터치가 막히고 음성 안내만 나오는지 보기.
+3. 이웃 도구를 켜고 도로의 파랑 차를 눌러 질문 버튼 보기.
+
+## 3. 기능 ↔ 파일 지도 (고칠 곳 찾기)
+| 하고 싶은 것 | 앱 | 서버 |
+|---|---|---|
+| 홈 화면 모양, 카드 | `MainActivity.kt` (`render…` 함수들), 색은 `Theme.kt` | - |
+| 도로·차 그림, 차선 속도 | `RoadView.kt` | - |
+| 이웃 질문·답 | `MainActivity.kt`(`askWhy`, `renderPicked`, `sendHeard`) | `questions.py`, `live.py`, `app_server.py`(`/api/ask`, `/api/send`) |
+| 위험 신고 | `HazardCamera.kt`, `MainActivity.kt`(`showHazard`) | `hazards.py` |
+| 가게 찾기·주문·결제 | `Errands.kt`(말 해석, 데이터), `MainActivity.kt`(`openOrder`, `askPay`, `payOrder`, `answerOrder`) | `shops.py`, `app_server.py`(`/api/shops…`), `static/shop.html` |
+| 말 인식·말 해석 | `VoiceInput.kt`, `MainActivity.kt`(`handleHeard`, `routeSpoken`), `Errands.kt`(`matchType`, `shopFor`) | - |
+| 주행·정차 판단 | `DrivingMonitor.kt`, `PleosClients.kt` | - |
+| 내비(경유지) | `NaviClient.kt` | - |
+
+## 4. 구조 (실제 파일 기준)
 ```
 차량 앱 (Kotlin, app/src/main/java/com/gildongmu/app)      서버 (Python, server/)
- MainActivity.kt  2,676줄  화면 전체와 흐름 ◀── 한 파일 ──   app_server.py  768줄  모든 요청의 입구(라우팅)
+ MainActivity.kt  약 2,700줄  화면 전체와 흐름 ◀── 한 파일 ──   app_server.py  768줄  모든 요청의 입구(라우팅)
  RoadView.kt        442줄  도로와 차 그리기                    core.py         246줄  차 위치, 반경 탐색
  Errands.kt         174줄  가게 데이터 모양, 말 해석, 영역 캐시  questions.py/chat.py  질문·말풍선
  ApiClient.kt       331줄  서버 호출(JSON over HTTP)            board.py        179줄  도로 소식·점수
@@ -36,13 +116,13 @@
 - **서버 인증:** 차량 요청에는 인증이 없습니다(시험용). 가게 쪽(등록, 주문 상태 변경)만 가게 열쇠가 필요합니다.
 - **더 자세히:** `docs/ARCHITECTURE.md`(개발 순서), `docs/PICKUP_PAYMENT.md`(가게·결제 흐름), `docs/PERMISSIONS.md`(권한·개인정보), `docs/DEMO.md`(시연 순서).
 
-## 4. 개발자 2명이 할 일
+## 5. 개발자 2명이 할 일
 **지금 기능은 거의 다 있습니다.** 그래서 새 기능을 더하는 것보다 **확인되지 않은 것을 확인하고, 약한 곳을 단단하게 만드는 일**이 점수에 직접 도움이 됩니다.
 
 ### 개발자 1 — 앱 쪽 (MainActivity와 실기기)
 | 순서 | 할 일 | 끝났다고 보는 기준 |
 |---|---|---|
-| 1 | **`MainActivity.kt`(2,676줄)를 기능별 파일로 나누기** (첫날, 한 사람이). 예: 가게·결제 화면, 위험 신고 화면, 이웃 질문 화면, 프로필 화면 | 기능이 그대로이고 앱 테스트·에뮬레이터 화면이 같다. 나눈 뒤에 다른 사람이 각자 파일을 고칠 수 있다 |
+| 1 | **`MainActivity.kt`(약 2,700줄)를 기능별 파일로 나누기** (첫날, 한 사람이). 예: 가게·결제 화면, 위험 신고 화면, 이웃 질문 화면, 프로필 화면 | 기능이 그대로이고 앱 테스트·에뮬레이터 화면이 같다. 나눈 뒤에 다른 사람이 각자 파일을 고칠 수 있다 |
 | 2 | **안드로이드 폰에 APK를 설치해 마이크 음성 인식 확인** (가장 큰 미확인) | "커피 마시고 싶어" "근처 주유소에 파는 거 알려줘" "결제해줘"를 실제로 말해 인식되는지, 몇 초 걸리는지 기록 |
 | 3 | **주행 중 화면 점검:** `force_state moving`으로 모든 카드가 터치 없이 되는지, 글자가 잘리지 않는지 | 점검표(화면별 O/X)를 남기고 X를 고친다 |
 
@@ -60,7 +140,7 @@
 - **자기 담당 부분의 구조는 직접 설명할 수 있어야 합니다.** 2차 PT 기술 질의 때문입니다.
 - 주제가 바뀌면(주유소 사전 결제, 주차장 등) 위 순서보다 그쪽이 먼저입니다.
 
-## 5. 디자이너 안내 (피그마 없이)
+## 6. 디자이너 안내 (피그마 없이)
 ### 무엇을 보나
 1. **화면 캡처 모음**을 받아서 봅니다(에뮬레이터를 켠 사람이 만들거나, `adb exec-out screencap -p > 이름.png`). 아직 정리된 모음이 없어서 필요하면 제가 캡처해 폴더에 넣겠습니다.
 2. 아래 화면 목록의 순서대로 봅니다.
@@ -104,8 +184,8 @@
 2. 주문 카드에서 **한 번에 눈에 들어와야 할 것**(가게, 메뉴, 가격, 결제)의 순서와 크기는?
 3. 아이콘이 지금 경고 삼각형 중심인데, 일관된 아이콘 세트로 바꿀 수 있는가?
 
-## 6. 아직 안 된 것, 모르는 것
-- 마이크 음성 인식은 에뮬레이터에 없어서 **실기기에서 확인한 적이 없습니다.**
+## 7. 아직 안 된 것, 모르는 것
+- **마이크로 실제 말을 알아듣는지 확인한 적이 없습니다.** 지금까지의 음성 시험은 글자를 앱에 넣는 방식(`say`)이고, 에뮬레이터는 앱이 읽어 주는 소리(TTS)도 초기화에 실패합니다. 폰에서 먼저 확인하세요.
 - 이웃 두 대 이상의 동시 시험은 **한 대 + 시험용 스크립트로만** 했습니다.
 - 결제·가게는 모의입니다. 내비 경유지 권한(`NAVI_ROUTE_SEARCH`)이 앱마켓 심사에서 승인되는지 **확인하지 못했습니다.**
 - 팀 참가로 바꾸는 방법(수정 제출로 되는지)은 **확인하지 못했습니다.**
