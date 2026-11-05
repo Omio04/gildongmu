@@ -1021,9 +1021,9 @@ class MainActivity : AppCompatActivity() {
         // the pickup list and the order card need the room: the report banner steps aside while they are open
         // any big card in the top slot (a report, a sentence to confirm, an offer, an order, a picked car, the profile) takes the room of the banner:
         // otherwise the buttons at the bottom are pushed off the screen
-        bannerCard.visibility = if (profileOpen || payOpen || pendingReport != null || order != null || hazard != null || heardText != null || nudge != null || pickedCar != null) View.GONE else View.VISIBLE
-        answersCard.visibility = if (order != null || profileOpen || payOpen || hazard != null || heardText != null || nudge != null || pickedCar != null || pendingReport != null) View.GONE else View.VISIBLE   // the order or profile card replaces it: no empty squeezed card under it
-        stoppedArea.visibility = if (info.canSend && !profileOpen && !payOpen && order == null) View.VISIBLE else View.GONE   // editing the profile needs the room
+        bannerCard.visibility = if (profileOpen || payOpen || kindChooser || pendingReport != null || order != null || hazard != null || heardText != null || nudge != null || pickedCar != null) View.GONE else View.VISIBLE
+        answersCard.visibility = if (order != null || kindChooser || profileOpen || payOpen || hazard != null || heardText != null || nudge != null || pickedCar != null || pendingReport != null) View.GONE else View.VISIBLE   // the order or profile card replaces it: no empty squeezed card under it
+        stoppedArea.visibility = if (info.canSend && !profileOpen && !payOpen && order == null && !kindChooser) View.VISIBLE else View.GONE   // editing the profile needs the room
     }
 
     /**
@@ -1277,8 +1277,14 @@ class MainActivity : AppCompatActivity() {
             if ("주문" in w && listOf("취소", "그만").any { it in w }) { if (o.carCanCancel) cancelActiveOrder() else speak("가게가 조리를 시작해서 취소할 수 없어요"); return }
             if ("주문" in w && listOf("어떻게", "상태", "언제", "됐", "어디").any { it in w }) { speak(Errands.statusSpoken(o)); return }
         }
+        if (kindChooser) {   // the window is open: one word picks, or close it
+            val w0 = spoken.replace(" ", "")
+            if (listOf("닫", "그만", "취소", "됐어").any { it in w0 }) { kindChooser = false; renderAnswers(); return }
+            Errands.kindFromWord(spoken)?.let { openList(it); return }
+            speakThen("커피나 음료, 식사, 간식 중에 말해 주세요", "confirm"); return
+        }
         val type = Errands.matchType(spoken)
-        if (type != null) openList(type) else propose(spoken)
+        if (type == "ALL") openKindChooser() else if (type != null) openList(type) else propose(spoken)
     }
 
     private fun touchOk() = info.state != DriveState.MOVING
@@ -1392,6 +1398,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private var kindChooser = false                  // the "what do you need on the way?" window is open
     private var activeOrder: OrderReceipt? = null   // the order being made (paid), followed until it is picked up or cancelled
     private var lastOrderStatus = ""
     private var showAllShops = false                  // favourites are set, but the driver asked to see every shop for now
@@ -1494,7 +1501,40 @@ class MainActivity : AppCompatActivity() {
      * One tap, no choosing: the nearest shop that has what was asked for, with one item.
      * "다른 곳" shows the next shop; the shop's phone number is part of its data, shown on the card.
      */
+    /** "가는 길에 뭐 필요해?": a small window with what can be had within range, read out loud, picked with one word. */
+    private fun openKindChooser() {
+        val v = shopView
+        if (v == null) { refreshShops(); flash("가까운 가게를 찾고 있어요 · 잠시 뒤 다시 말해 주세요", "가는 길 픽업"); return }
+        val kinds = Errands.kindsIn(v, activeFavs())
+        if (kinds.isEmpty()) {
+            val msg = "${v.rangeKm.toInt()}km 안에는 받을 수 있는 곳이 아직 없어요"
+            flash(msg, "가는 길 픽업"); speak(msg); return
+        }
+        pickedCar = null; profileOpen = false; payOpen = false; pendingReport = null; order = null
+        kindChooser = true
+        speakThen("${v.rangeKm.toInt()}킬로 안에서 " + kinds.joinToString(", ") { Errands.label(it) } + " 받을 수 있어요. 무엇이 필요하세요?", "confirm")
+        renderAnswers()
+    }
+
+    private fun renderKindChooser() {
+        val v = shopView
+        answersCount.text = ""
+        attentionCard.removeAllViews()
+        attentionCard.visibility = View.VISIBLE
+        attentionCard.addView(text("가는 길에 무엇이 필요하세요?", 20f, t.ink, 2), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
+        attentionCard.addView(text("말로 골라도 돼요 · 예: “커피”", 14f, t.muted, 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
+        val kinds = if (v == null) emptyList() else Errands.kindsIn(v, activeFavs())
+        val row = LinearLayout(this)
+        kinds.forEach { kind ->
+            row.addView(actionBtn(Errands.label(kind), t.surface, t.ink, 17f) { openList(kind) },
+                LinearLayout.LayoutParams(0, -2, 1f).apply { if (row.childCount > 0) leftMargin = dp(8) })
+        }
+        attentionCard.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+        attentionCard.addView(actionBtn("닫기", t.surface, t.muted, 16f) { kindChooser = false; renderAnswers() }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+    }
+
     private fun openList(key: String) {
+        kindChooser = false
         val v = shopView
         if (v == null) {
             if (currentPlace() == null) {   // no position yet: say so, instead of staying silent
@@ -1881,7 +1921,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun listenForConfirm() {
-        if ((heardText != null && confirmByVoice) || nudge != null || hazard != null || order != null) voice?.listen()
+        if ((heardText != null && confirmByVoice) || nudge != null || hazard != null || order != null || kindChooser) voice?.listen()
     }
 
     private fun answerConfirm(said: String) {
@@ -2132,6 +2172,7 @@ class MainActivity : AppCompatActivity() {
             spoken != null -> renderHeard(spoken)
             order != null -> renderOrder(order!!)
             reporting != null -> renderReportReasons(reporting)
+            kindChooser -> renderKindChooser()
             payOpen -> renderPayments()
             profileOpen -> renderProfile()
             picked != null -> renderPicked(picked)

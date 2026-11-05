@@ -76,4 +76,15 @@ class ErrandsTest {
         assertTrue("조리 중" in line && "4분" in line && "2분 늦어졌어요" in line)
         assertTrue("도착" !in Errands.statusSpoken(o.copy(status = "picked_up", statusLabel = "수령 완료")))
     }
+
+    @Test
+    fun `a general question opens the chooser and one word then picks a kind`() {
+        assertEquals("ALL", Errands.matchType("가는 길에 뭐 필요해?"))
+        assertEquals("ALL", Errands.matchType("근처에 뭐 있어?"))
+        assertEquals("음료", Errands.kindFromWord("커피"))
+        assertEquals("식사", Errands.kindFromWord("밥 먹을래"))
+        assertEquals("간식", Errands.kindFromWord("간식"))
+        assertNull(Errands.kindFromWord("안녕"))
+        assertNull(Errands.matchType("휴게소 주차장 자리 있어요?"))   // still goes to the neighbours
+    }
 }

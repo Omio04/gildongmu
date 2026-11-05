@@ -69,7 +69,7 @@ object Errands {
 
     fun label(key: String) = LABEL[key] ?: key
 
-    private val ASK = listOf("주문", "픽업", "먹", "마실", "마시", "싶어", "고파", "고픈", "뭐 있", "뭐있", "어디", "있어", "사고싶", "사줘", "줘")
+    private val ASK = listOf("필요", "살만", "주문", "픽업", "먹", "마실", "마시", "싶어", "고파", "고픈", "뭐 있", "뭐있", "어디", "있어", "사고싶", "사줘", "줘")
     private val NOT_PICKUP = listOf("주차", "막혀", "막힘", "혼잡", "사고", "정체", "낙하", "공사")
 
     /**
@@ -87,7 +87,18 @@ object Errands {
             "드라이브스루" in w || "디티" in w || "dt" in w.lowercase() -> "드라이브스루"
             listOf("휴게소", "졸음쉼터").any { it in w } -> "휴게소"
             listOf("주유", "충전", "편의점").any { it in w } -> "편의점·주유"
-            listOf("뭐있", "픽업").any { it in w } -> "식사"
+            listOf("뭐필요", "필요한", "뭐있", "뭐가있", "픽업", "가게", "살만한", "사야").any { it in w } -> "ALL"   // asked in general: open the chooser
+            else -> null
+        }
+    }
+
+    /** The answer to "무엇이 필요하세요?": one word is enough. */
+    fun kindFromWord(spoken: String): String? {
+        val w = spoken.replace(" ", "")
+        return when {
+            listOf("커피", "음료", "마실", "차").any { it in w } -> "음료"
+            listOf("식사", "밥", "도시락", "먹을", "배고").any { it in w } -> "식사"
+            listOf("간식", "빵", "과자", "출출").any { it in w } -> "간식"
             else -> null
         }
     }
