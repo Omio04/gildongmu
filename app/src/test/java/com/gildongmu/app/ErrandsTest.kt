@@ -113,6 +113,8 @@ class ErrandsTest {
         val v = view.copy(shops = view.shops + fuel)
         assertEquals("해뜰커피 DT", Errands.shopFor(v, "근처 해뜰커피 알려줘")?.name)
         assertEquals("초록주유소 편의점", Errands.shopFor(v, "근처 주유소에 파는 거 알려줘")?.name)
+        assertEquals("해뜰커피 DT", Errands.shopFor(v, "근처 해뜰커피 있나?")?.name)       // "있나" asks too
+        assertEquals("해뜰커피 DT", Errands.shopFor(v, "근처에 카페 있나")?.name)         // a kind of shop, not a brand
         assertNull(Errands.shopFor(v, "해뜰커피 맛있더라"))                 // chatter that only mentions a name
         assertNull(Errands.shopFor(v, "주차장에 자리 있어요"))               // never taken for a shop request
         assertTrue("생수" in Errands.sellingSpoken(fuel) && "샌드위치" in Errands.sellingSpoken(fuel))

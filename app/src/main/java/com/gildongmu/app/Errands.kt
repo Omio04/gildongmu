@@ -98,7 +98,7 @@ object Errands {
 
     fun label(key: String) = LABEL[key] ?: key
 
-    private val ASK = listOf("필요", "살만", "주문", "픽업", "먹", "마실", "마시", "싶어", "고파", "고픈", "뭐 있", "뭐있", "어디", "있어", "사고싶", "사줘", "줘")
+    private val ASK = listOf("필요", "살만", "주문", "픽업", "먹", "마실", "마시", "싶어", "고파", "고픈", "뭐 있", "뭐있", "어디", "있어", "사고싶", "사줘", "줘", "있나", "있니")
     private val NOT_PICKUP = listOf("주차", "막혀", "막힘", "혼잡", "사고", "정체", "낙하", "공사")
 
     /**
@@ -121,8 +121,8 @@ object Errands {
         }
     }
 
-    private val SELL_WORDS = listOf("파는", "팔아", "팔고", "판매", "알려", "있어", "뭐있", "메뉴", "얼마")
-    private val PLACE_WORDS = listOf("주유소" to "편의점·주유", "편의점" to "편의점·주유", "휴게소" to "휴게소", "졸음쉼터" to "휴게소", "드라이브스루" to "드라이브스루")
+    private val SELL_WORDS = listOf("파는", "팔아", "팔고", "판매", "알려", "있어", "있나", "있니", "있는지", "있을까", "뭐있", "메뉴", "얼마")
+    private val PLACE_WORDS = listOf("카페" to "드라이브스루", "커피숍" to "드라이브스루", "주유소" to "편의점·주유", "편의점" to "편의점·주유", "휴게소" to "휴게소", "졸음쉼터" to "휴게소", "드라이브스루" to "드라이브스루")
 
     /**
      * "근처 해뜰커피 알려줘", "근처 주유소에 파는 거 알려줘": the nearest shop the sentence names, by its name or brand (two letters
