@@ -1047,7 +1047,7 @@ class MainActivity : AppCompatActivity() {
         // otherwise the buttons at the bottom are pushed off the screen
         bannerCard.visibility = if (profileOpen || payOpen || kindChooser || pendingReport != null || order != null || hazard != null || heardText != null || nudge != null || pickedCar != null) View.GONE else View.VISIBLE
         answersCard.visibility = if (order != null || kindChooser || profileOpen || payOpen || hazard != null || heardText != null || nudge != null || pickedCar != null || pendingReport != null) View.GONE else View.VISIBLE   // the order or profile card replaces it: no empty squeezed card under it
-        stoppedArea.visibility = if (info.canSend && !profileOpen && !payOpen && order == null && !kindChooser) View.VISIBLE else View.GONE   // editing the profile needs the room
+        stoppedArea.visibility = if (info.canSend && !profileOpen && !payOpen && order == null && !kindChooser && pickedCar == null && pendingReport == null) View.VISIBLE else View.GONE   // editing the profile needs the room; a picked car is the only thing on screen
     }
 
     /**
@@ -2564,13 +2564,12 @@ class MainActivity : AppCompatActivity() {
         whoText.addView(text(where + dest, 14f, t.muted), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(1) })
         who.addView(whoText)
         attentionCard.addView(who, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) })
+        // one thing to do (ask this car: the mic opens at once), and two small ways out
+        attentionCard.addView(actionBtn("이 차에 물어보기", t.accent, Color.WHITE, 20f) { askPicked(car) }, LinearLayout.LayoutParams(-1, dp(64)).apply { topMargin = dp(14) })
         val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        row.addView(actionBtn("이 차에 물어보기", t.accent, Color.WHITE) { askPicked(car) }, LinearLayout.LayoutParams(0, -2, 1.7f))
-        row.addView(actionBtn("신고", t.surface, t.muted) { startReport(car.nickname, car.id) { reason -> reportPicked(car, reason) } },
-            LinearLayout.LayoutParams(0, -2, 0.7f).apply { leftMargin = dp(8) })
-        row.addView(actionBtn("닫기", t.surface, t.muted) { pickedCar = null; renderAnswers() },
-            LinearLayout.LayoutParams(0, -2, 0.7f).apply { leftMargin = dp(8) })
-        attentionCard.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+        row.addView(actionBtn("신고", t.surface, t.muted, 15f) { startReport(car.nickname, car.id) { reason -> reportPicked(car, reason) } }, LinearLayout.LayoutParams(0, -2, 1f))
+        row.addView(actionBtn("닫기", t.surface, t.muted, 15f) { pickedCar = null; renderAnswers() }, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
+        attentionCard.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
     }
 
     /** "이 차에 물어보기": the driver now says the question out loud; it is read back before it goes to this car only. */
