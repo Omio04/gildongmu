@@ -1,76 +1,79 @@
 package com.gildongmu.app
 
 /**
- * "가는 길 픽업": places on the way where something can be picked up. SAMPLE data (fictional shops, made-up
- * distances): nothing here is a real shop, and no payment is made. The unit is the kind of place, not a menu.
+ * "가는 길 픽업": the partner shops near the car, as the server sends them. Each shop registered itself with a
+ * structure (name, brand, kind of place, position, phone, preparation time, menu), so the app only reads and offers.
+ *
+ * The driver asks for what they want, not for a kind of place: every menu item is a drink (음료), a meal (식사)
+ * or a snack (간식), and the same three fit a drive-through, a rest-stop restaurant and a convenience store.
+ * Once the driver has marked brands as favourites, only those are offered (until they ask to see all again).
+ * SAMPLE data and a mock payment: the shops are fictional and nothing is charged.
  */
-data class Shop(
-    val name: String,
-    val types: List<String>,
-    val km: Double,        // sample distance ahead
-    val waitMin: Int,      // sample preparation time
-    val item: String,      // the popular item
-    val price: Int,
-) {
+data class MenuItem(val name: String, val price: Int, val kind: String) {
     fun priceText() = "%,d원".format(price)
-    fun etaMin() = Errands.etaMin(km)
-    /** Minutes from now until the shop should start cooking, so it is ready when the car arrives. */
-    fun cookInMin() = maxOf(0, etaMin() - waitMin)
 }
 
+data class Shop(
+    val id: String, val name: String, val brand: String, val place: String, val km: Double, val etaMin: Int, val waitMin: Int,
+    val cookInMin: Int, val phone: String, val menu: List<MenuItem>,
+)
+
+/** What the server answered for the car's position: shops inside the range, and the nearest one of all. */
+data class ShopsView(val rangeKm: Double, val shops: List<Shop>, val nearestName: String?, val nearestKm: Double, val nearestPlace: String?)
+
+/** One offer: a shop and the single item that answers the driver's request. */
+data class Pick(val shop: Shop, val item: MenuItem)
+
+data class OrderReceipt(val receipt: String, val shop: String, val item: String, val price: Int, val etaMin: Int, val cookInMin: Int, val status: String)
+
 object Errands {
-    val TYPES = listOf("드라이브스루", "휴게소", "간식·음료", "식사", "주유·편의점")
+    val ITEM_KINDS = listOf("음료", "식사", "간식")
+    val LABEL = mapOf("음료" to "커피·음료", "식사" to "식사", "간식" to "간식")
 
-    private val places = listOf(
-        Shop("해뜰커피 DT", listOf("드라이브스루", "간식·음료"), 2.1, 3, "아메리카노 1잔", 4500),
-        Shop("든든버거 DT", listOf("드라이브스루", "식사"), 3.0, 4, "치즈버거 세트", 7900),
-        Shop("고소베이커리 DT", listOf("드라이브스루", "간식·음료"), 4.5, 2, "소금빵 2개", 5200),
-        Shop("산들휴게소 푸드코트", listOf("휴게소", "식사"), 12.0, 6, "우동 세트", 7000),
-        Shop("산들휴게소 호두과자", listOf("휴게소", "간식·음료"), 12.2, 3, "호두과자 한 봉지", 4000),
-        Shop("들꽃쉼터 매점", listOf("휴게소", "간식·음료"), 7.0, 2, "컵라면", 2500),
-        Shop("정든도시락", listOf("식사"), 5.5, 8, "불고기 도시락", 6500),
-        Shop("초록주유소 편의점", listOf("주유·편의점", "간식·음료"), 3.8, 1, "생수와 샌드위치", 4800),
-        Shop("별빛충전소 편의점", listOf("주유·편의점"), 9.0, 1, "에너지 음료", 2200),
-    )
+    /**
+     * The nearest shops (at most 3) that answer [key], each with ONE item: [key] is a kind of item (음료, 식사, 간식),
+     * or, when the driver names a kind of place, that place's first menu item. With [favourites] only those brands count.
+     */
+    fun picks(view: ShopsView, key: String, favourites: Set<String> = emptySet()): List<Pick> =
+        view.shops.sortedBy { it.km }
+            .filter { favourites.isEmpty() || it.brand in favourites }
+            .mapNotNull { s ->
+                val item = if (key in ITEM_KINDS) s.menu.firstOrNull { it.kind == key } else if (s.place == key) s.menu.firstOrNull() else null
+                item?.let { Pick(s, it) }
+            }.take(3)
 
-    fun near(type: String): List<Shop> = places.filter { type in it.types }.sortedBy { it.km }.take(3)
+    /** The kinds of item that at least one shop in range can give: only those are offered as buttons. */
+    fun kindsIn(view: ShopsView, favourites: Set<String> = emptySet()): List<String> = ITEM_KINDS.filter { picks(view, it, favourites).isNotEmpty() }
 
-    /** About 50 km/h on average. */
-    fun etaMin(km: Double) = maxOf(1, Math.round(km * 1.2).toInt())
+    fun label(key: String) = LABEL[key] ?: key
 
-    fun receiptNo(): String = "D-" + (1000 + Math.abs((System.nanoTime() % 9000).toInt()))
-
-    private val ASK = listOf("주문", "픽업", "먹", "마실", "뭐 있", "뭐있", "어디", "있어")
+    private val ASK = listOf("주문", "픽업", "먹", "마실", "마시", "싶어", "고파", "고픈", "뭐 있", "뭐있", "어디", "있어", "사고싶", "사줘", "줘")
     private val NOT_PICKUP = listOf("주차", "막혀", "막힘", "혼잡", "사고", "정체", "낙하", "공사")
 
     /**
-     * The kind of place a spoken sentence asks for, or null. A question about parking, jams or accidents is
-     * never taken for an order: those go to the neighbours as usual.
+     * What a spoken sentence asks for (an item kind, or a kind of place), or null. A question about parking, jams or
+     * accidents is never taken for an order: those go to the neighbours as usual.
      */
     fun matchType(spoken: String): String? {
         val w = spoken.replace(" ", "")
         if (NOT_PICKUP.any { it in w }) return null
         if (ASK.none { it.replace(" ", "") in w }) return null
         return when {
-            listOf("드라이브스루", "디티", "dt").any { it in w.lowercase() } -> "드라이브스루"
+            listOf("커피", "음료", "마실", "차가운", "시원한").any { it in w } -> "음료"
+            listOf("식사", "밥", "도시락", "점심", "저녁", "배고", "뭐먹", "먹을").any { it in w } -> "식사"
+            listOf("간식", "빵", "과자", "출출").any { it in w } -> "간식"
+            "드라이브스루" in w || "디티" in w || "dt" in w.lowercase() -> "드라이브스루"
             listOf("휴게소", "졸음쉼터").any { it in w } -> "휴게소"
-            listOf("주유", "충전", "편의점").any { it in w } -> "주유·편의점"
-            listOf("식사", "밥", "도시락", "점심", "저녁").any { it in w } -> "식사"
-            listOf("간식", "음료", "커피", "마실").any { it in w } -> "간식·음료"
-            listOf("뭐먹", "먹을", "뭐있", "픽업").any { it in w } -> "드라이브스루"
+            listOf("주유", "충전", "편의점").any { it in w } -> "편의점·주유"
+            listOf("뭐있", "픽업").any { it in w } -> "식사"
             else -> null
         }
     }
 
-    /** Which listed place a spoken answer picks ("맥도날드" style: by the first two letters, or "첫 번째"). */
-    fun pick(list: List<Shop>, spoken: String): Shop? {
-        val w = spoken.replace(" ", "")
-        list.firstOrNull { p -> p.name.replace(" ", "").let { n -> w.contains(n.take(2)) || (w.length >= 2 && n.contains(w)) } }?.let { return it }
-        return when {
-            listOf("첫", "1번", "하나", "일번").any { it in w } -> list.getOrNull(0)
-            listOf("두", "2번", "둘", "이번").any { it in w } -> list.getOrNull(1)
-            listOf("세", "3번", "셋", "삼번").any { it in w } -> list.getOrNull(2)
-            else -> null
-        }
-    }
+    /** The sentence read to the driver for one offer (everything needed to say "결제" or "다른 곳"). */
+    fun spoken(p: Pick): String =
+        "가장 가까운 곳은 ${p.shop.place} ${p.shop.name}, ${"%.1f".format(p.shop.km)}킬로. ${p.item.name} ${p.item.priceText()}. " +
+            "${p.shop.etaMin}분 뒤 도착이라 맞춰 준비해요. 결제, 메뉴, 다른 곳, 단골, 취소 중에 말해 주세요"
+
+    fun menuSpoken(s: Shop): String = "${s.name} 메뉴는 " + s.menu.joinToString(", ") { "${it.name} ${it.priceText()}" } + ". 결제할까요?"
 }

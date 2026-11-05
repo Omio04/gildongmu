@@ -57,6 +57,7 @@ import board as boardmod
 import chat as chatmod
 import core
 import hazards as hzmod
+import shops as shopsmod
 import live
 import questions as qmod
 
@@ -76,6 +77,7 @@ room = live.LiveRoom()
 reports = live.Reports()
 DATA_DIR = pathlib.Path(os.environ.get("GILDONGMU_DATA") or pathlib.Path(__file__).with_name("data"))   # tickets + photos survive a restart
 PHOTO_DAYS = 30             # photos are the most personal thing kept: deleted after this many days
+shopbook = shopsmod.Shops(store=DATA_DIR)   # partner shops (they register themselves) and the pickup orders for them
 hazards = hzmod.Hazards(store=DATA_DIR)   # what the car sees on the road, and the reports the driver confirms
 hazards.purge_old(PHOTO_DAYS)
 road_chat = chatmod.Chat()   # short spoken messages to everyone around, shown beside the sender's car
@@ -337,6 +339,10 @@ class Handler(BaseHTTPRequestHandler):
                     out.append({"id": r["id"], "from": _name(r["from_id"]), "text": text, "coupon": coupon, "tag": tag,
                                 "auto": r["auto"] == 1, "human": r["auto"] == 2})
                 return self._json(200, out)
+            if u.path == "/api/shops":   # the shops near the car's position: distance, arrival, menu
+                return self._json(200, shopbook.near(float(q["lat"]), float(q["lon"]), float(q.get("radius", shopsmod.RANGE_KM))))
+            if u.path == "/api/shops/orders":   # what one shop would see on its own screen
+                return self._json(200, {"items": shopbook.orders_for(str(q["shop_id"]))})
             if u.path == "/api/hazard/proposal":   # does the car think it sees something? (the driver decides)
                 return self._json(200, {"proposal": hazards.proposal()})
             if u.path == "/api/hazard/mine":
@@ -496,6 +502,20 @@ class Handler(BaseHTTPRequestHandler):
 
             if u.path == "/api/hazard/decline":
                 return self._json(200, {"ok": hazards.decline(int(data.get("proposal_id", 0)))})
+
+            if u.path == "/api/shops/register":   # a partner shop sends its own data (test server: no sign-in yet)
+                try:
+                    return self._json(200, {"ok": True, "id": shopbook.register(data)})
+                except shopsmod.ShopError as e:
+                    return self._json(422, {"error": str(e)})
+
+            if u.path == "/api/shops/order":   # the driver said or tapped pay: recorded for the shop, nothing is charged
+                try:
+                    key = str(data["key"])[:64] if data.get("key") else None
+                    return self._json(200, shopbook.order(str(data["shop_id"]), str(data["item"]), ME,
+                                                          float(data["lat"]), float(data["lon"]), key=key))
+                except shopsmod.ShopError as e:
+                    return self._json(422, {"error": str(e)})
 
             if u.path == "/api/hazard/report":   # one tap: stored with a ticket number, and shown to the neighbours
                 kind = str(data.get("kind", ""))

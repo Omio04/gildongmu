@@ -85,6 +85,33 @@ class ApiClient(private val base: String = "http://10.0.2.2:8080") {
         }
     }
 
+    /** The partner shops near this position, as they registered themselves (inside the server's range). */
+    fun shopsNear(lat: Double, lon: Double): ShopsView {
+        val (code, body) = call("GET", "/api/shops?lat=$lat&lon=$lon")
+        if (code != 200) throw java.io.IOException("shops $code")
+        val o = JSONObject(body)
+        val arr = o.getJSONArray("shops")
+        val shops = (0 until arr.length()).map {
+            val s = arr.getJSONObject(it)
+            val m = s.getJSONArray("menu")
+            Shop(s.getString("id"), s.getString("name"), s.optString("brand", s.getString("name")), s.getString("place"),
+                s.getDouble("km"), s.getInt("eta_min"), s.getInt("wait_min"), s.getInt("cook_in_min"), s.getString("phone"),
+                (0 until m.length()).map { i -> m.getJSONObject(i).let { x -> MenuItem(x.getString("name"), x.getInt("price"), x.getString("kind")) } })
+        }
+        val n = if (o.isNull("nearest")) null else o.getJSONObject("nearest")
+        return ShopsView(o.getDouble("range_km"), shops, n?.getString("name"), n?.optDouble("km", 0.0) ?: 0.0, n?.optString("place"))
+    }
+
+    /** Pay for one item: the server records the order for the shop (a mock payment) and answers with a receipt, or null. */
+    fun orderShop(shopId: String, item: String, lat: Double, lon: Double, key: String): OrderReceipt? {
+        val body = JSONObject().put("shop_id", shopId).put("item", item).put("lat", lat).put("lon", lon).put("key", key)
+        val (code, text) = call("POST", "/api/shops/order", body)
+        if (code != 200) return null
+        val o = JSONObject(text)
+        return OrderReceipt(o.getString("receipt"), o.getString("shop"), o.getString("item"), o.getInt("price"),
+            o.getInt("eta_min"), o.getInt("cook_in_min"), o.getString("status"))
+    }
+
     fun inbox(after: Int): List<Inbound> {
         val arr = JSONArray(call("GET", "/api/inbox?vid=me&after=$after").second)
         return (0 until arr.length()).map {

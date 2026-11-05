@@ -2,7 +2,9 @@ package com.gildongmu.app
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.content.Intent
 import android.graphics.Color
+import android.net.Uri
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.LayerDrawable
@@ -140,9 +142,9 @@ class MainActivity : AppCompatActivity() {
 
     // what the recogniser heard, held back until the driver says it is right (never sent unconfirmed)
     private var heardText: String? = null
-    private var order: Shop? = null                // a (sample) pickup waiting for the driver to pay or cancel
-    private var pickPlaces: List<Shop> = emptyList()   // the places listed for the kind the driver asked for
-    private var pickType = ""
+    private var order: Pick? = null                // a (sample) pickup waiting for the driver to pay or cancel
+    private var alts: List<Pick> = emptyList()      // the shops of the asked kind in range, nearest first; "다른 곳" steps through them
+    private var altIdx = 0
     private var confirmByVoice = false   // true while we wait for "보내"/"다시"/"취소" said out loud
 
     // views
@@ -205,7 +207,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
         voice = VoiceInput(this,
-            onHeard = { spoken -> ui.post { voiceWave.active = false; if (confirmByVoice) answerConfirm(spoken) else if (hazard != null) answerHazard(spoken) else if (order != null) answerOrder(spoken) else if (pickPlaces.isNotEmpty()) answerPick(spoken) else if (nudge != null) answerNudge(spoken) else routeSpoken(spoken) } },
+            onHeard = { spoken -> ui.post { voiceWave.active = false; if (confirmByVoice) answerConfirm(spoken) else if (hazard != null) answerHazard(spoken) else if (order != null) answerOrder(spoken) else if (nudge != null) answerNudge(spoken) else routeSpoken(spoken) } },
             onProblem = { msg -> ui.post { voiceWave.active = false; showNote(msg) } },
             onListening = { ui.post { voiceWave.active = true } })
 
@@ -218,7 +220,9 @@ class MainActivity : AppCompatActivity() {
         renderAnswers()
         // nothing leaves the car (position, profile, questions) until the driver has read what is used and agreed
         consented = getSharedPreferences("gildongmu", MODE_PRIVATE).getBoolean(CONSENT_KEY, false)
-        if (consented) startSharing() else showConsent(readOnly = false)
+        // first run: what the app does, then what it uses (and the driver's yes), then the profile (or skip it)
+        val begin = { if (consented) startSharing() else showConsent(readOnly = false) }
+        if (!getSharedPreferences("gildongmu", MODE_PRIVATE).getBoolean(INTRO_KEY, false)) showIntro(begin) else begin()
         ui.postDelayed(object : Runnable {   // the "stuck for N minutes" label moves on its own clock
             override fun run() { renderState(); ui.postDelayed(this, 20_000) }
         }, 20_000)
@@ -234,6 +238,8 @@ class MainActivity : AppCompatActivity() {
                 "idling" -> ui.postDelayed({ forcedInfo = DriveInfo(DriveState.IDLING, true, 0x50, 0f); onDriveInfo(forcedInfo!!) }, 4000)
                 "locked" -> ui.postDelayed({ forcedInfo = DriveInfo(DriveState.MOVING, true, 0x1FF, 32f); onDriveInfo(forcedInfo!!) }, 4000)
             }
+            if (intent.hasExtra("fake_lat") && intent.hasExtra("fake_lon"))
+                fakePlace = Place(intent.getFloatExtra("fake_lat", 0f).toDouble(), intent.getFloatExtra("fake_lon", 0f).toDouble(), 0.0, "시험 위치")
             intent.getStringExtra("demo_hazard")?.let { k -> ui.postDelayed({ io.execute { try { java.net.URL("${serverUrl()}/api/demo/event?kind=$k").readText() } catch (_: Exception) {} } }, 4000) }
             if (intent.getBooleanExtra("demo_nudge", false)) ui.postDelayed({ showNudge(JamReason.SUDDEN) }, 5000)
             if (intent.getBooleanExtra("demo_pick", false)) ui.postDelayed({ neighbors.firstOrNull()?.let { onCarTapped(it.id) } }, 4500)   // the card of a tapped car
@@ -258,6 +264,12 @@ class MainActivity : AppCompatActivity() {
         }
         ui.postDelayed(object : Runnable {
             override fun run() { navi?.refresh(); ui.postDelayed(this, 10_000) }
+        }, 10_000)
+        ui.postDelayed(object : Runnable {   // the car moves: which pickup shops are in range changes, so redraw the idle slot
+            override fun run() {
+                if (order == null && note == null && answers.isEmpty() && questions.isEmpty() && roadMessages.isEmpty()) refreshShops()   // the answer redraws the slot
+                ui.postDelayed(this, 10_000)
+            }
         }, 10_000)
         ui.postDelayed(object : Runnable {   // the distance to the next turn counts down: ask again every few seconds
             override fun run() { navi?.refreshTurn(); ui.postDelayed(this, 3_000) }
@@ -299,6 +311,52 @@ class MainActivity : AppCompatActivity() {
         pollLoop()
     }
 
+    private var introView: View? = null
+
+    /** The first thing a new driver sees: what the app is for, in four short cards. Shown once. */
+    private fun showIntro(onDone: () -> Unit) {
+        if (introView != null) return
+        val panel = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(30), dp(22), dp(30), dp(26)) }
+        panel.addView(text("길동무는 이렇게 써요", 26f, t.ink, 2))
+        panel.addView(text("막힌 길 위에서 근처 차에게 묻고, 알리고, 도움받아요", 15f, t.muted), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
+        listOf(
+            "왜 막혀요?" to "정체 중에 버튼 한 번, 또는 말로 근처 이웃에게 지금 사정을 물어봐요. 이웃이 답하면 바로 보여 드려요.",
+            "말로 하기" to "운전 중에는 마이크로 말해요. 말한 글자를 읽어 드리고, 내가 확인한 뒤에만 보내요.",
+            "알리기와 점수" to "사고·낙하물·로드킬·공사를 알리면, 이웃이 ‘도움이 됐어요’를 눌러 점수와 등급이 올라가요.",
+            "가는 길 픽업" to "5km 안 제휴 가게의 커피·식사·간식을 도착 시간에 맞춰 받아요. (지금은 시험용 샘플이고 결제는 모의예요)",
+        ).forEach { (title, body) ->
+            val row = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = glass(); setPadding(dp(16), dp(10), dp(16), dp(12)) }
+            row.addView(text(title, 17f, t.primary, 2))
+            row.addView(text(body, 14f, t.ink), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(3) })
+            panel.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
+        }
+        panel.addView(actionBtn("다음", t.accent, Color.WHITE) {
+            getSharedPreferences("gildongmu", MODE_PRIVATE).edit().putBoolean(INTRO_KEY, true).apply()
+            introView?.let { (it.parent as? android.view.ViewGroup)?.removeView(it) }; introView = null
+            onDone()
+        }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(16) })
+        val overlay = FrameLayout(this).apply {
+            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(t.bgTop, t.bgBottom))
+            isClickable = true
+            addView(android.widget.ScrollView(this@MainActivity).apply { addView(panel) }, FrameLayout.LayoutParams(-1, -1))
+        }
+        introView = overlay
+        addContentView(overlay, android.view.ViewGroup.LayoutParams(-1, -1))
+    }
+
+    /** Right after the first agreement: offer the profile (name, colour, car). It can be skipped, and is never forced while moving. */
+    private fun maybeFirstProfile() {
+        if (getSharedPreferences("gildongmu", MODE_PRIVATE).getBoolean(PROFILE_KEY, false) || !profileEditable()) return
+        profileOpen = true; pickedCar = null; pendingReport = null
+        renderAnswers()
+    }
+
+    private fun profileDone() {
+        getSharedPreferences("gildongmu", MODE_PRIVATE).edit().putBoolean(PROFILE_KEY, true).apply()
+        profileOpen = false
+        renderAnswers()
+    }
+
     /** The first-run notice (and, read-only, from the profile): plain words, one short paragraph per thing that is used. */
     private fun showConsent(readOnly: Boolean) {
         if (consentView != null) return
@@ -306,10 +364,10 @@ class MainActivity : AppCompatActivity() {
         panel.addView(text("개인정보와 권한 안내", 26f, t.ink, 2))
         panel.addView(text("길동무가 무엇을 쓰고, 무엇을 쓰지 않는지 먼저 알려 드려요", 15f, t.muted), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
         listOf(
-            "위치" to "가까운 차와의 거리를 재고, 신고한 곳을 남기는 데만 써요. 다른 차에는 정확한 위치 대신 대략의 거리만 보여요.",
+            "위치" to "가까운 차와의 거리를 재고, 신고한 곳을 남기고, 가까운 가게를 찾는 데만 써요. 다른 차에는 정확한 위치 대신 대략의 거리만 보여요.",
             "사진" to "위험을 신고할 때 ‘촬영하고 신고’를 누른 경우에만 한 장을 찍어요. 계속 녹화하지 않고, 서버에 ${PHOTO_DAYS}일 보관한 뒤 지워요.",
             "음성" to "말한 소리는 글자로만 바꿔 쓰고 저장하지 않아요. 글자는 내가 확인하고 ‘보내기’를 누르기 전에는 아무에게도 가지 않아요.",
-            "이름과 차종" to "목록에서 고른 이름과 차종만 이웃에게 보여요. 차종은 숨길 수 있어요.",
+            "이름·차종·주문" to "목록에서 고른 이름과 차종만 이웃에게 보여요. 가는 길 픽업은 시험용이라 실제 결제는 되지 않고, 주문(가게·메뉴·접수번호)만 서버에 기록돼요.",
             "신고" to "신고하면 이유가 기록되고, 신고된 이웃은 차단돼요. 신고 내용은 도로 관리 기관에 자동으로 전달되지 않아요.",
         ).forEach { (title, body) ->
             val row = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = glass(); setPadding(dp(16), dp(10), dp(16), dp(12)) }
@@ -327,6 +385,7 @@ class MainActivity : AppCompatActivity() {
                 consented = true
                 close()
                 startSharing()
+                maybeFirstProfile()
             }, LinearLayout.LayoutParams(0, -2, 1.6f))
             buttons.addView(actionBtn("동의하지 않음", t.surface, t.muted) { finish() }, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(10) })
         }
@@ -907,7 +966,8 @@ class MainActivity : AppCompatActivity() {
         // Answers never take over the screen: they appear in the card at the bottom, and the controls stay where they are.
         // The tall cards (my profile, the report reasons) take the board's place so that nothing is pushed off the screen.
         // the pickup list and the order card need the room: the report banner steps aside while they are open
-        bannerCard.visibility = if (profileOpen || pendingReport != null || order != null || pickPlaces.isNotEmpty()) View.GONE else View.VISIBLE
+        bannerCard.visibility = if (profileOpen || pendingReport != null || order != null) View.GONE else View.VISIBLE
+        answersCard.visibility = if (order != null || profileOpen) View.GONE else View.VISIBLE   // the order or profile card replaces it: no empty squeezed card under it
         stoppedArea.visibility = if (info.canSend && !profileOpen) View.VISIBLE else View.GONE   // editing the profile needs the room
     }
 
@@ -1125,119 +1185,211 @@ class MainActivity : AppCompatActivity() {
 
     /** A spoken sentence: a pickup request if it names a kind of place, otherwise the normal "this is what I heard" flow. */
     private fun routeSpoken(spoken: String) {
+        if (spoken.replace(" ", "").let { "전체" in it && "보" in it } && favourites().isNotEmpty()) { showAllShops = true; renderAnswers(); return }
         val type = Errands.matchType(spoken)
         if (type != null) openList(type) else propose(spoken)
     }
 
     private fun touchOk() = info.state != DriveState.MOVING
 
-    /** The idle slot: one chip per kind of place. Touch only when stopped; while moving, the driver asks aloud. */
+    private var shopView: ShopsView? = null          // what the server last said is near the car
+    private var shopLoading = false
+    private var shopFailed = false
+    private var orderKey = ""
+    private var showAllShops = false                  // favourites are set, but the driver asked to see every shop for now
+
+    private fun favourites(): Set<String> = getSharedPreferences("gildongmu", MODE_PRIVATE).getStringSet("fav_brands", emptySet())!!.toSet()
+    private fun activeFavs(): Set<String> = if (showAllShops) emptySet() else favourites()
+
+    /** Mark a brand as a favourite (or not): once there are favourites, only those brands are offered. */
+    private fun toggleFavourite(brand: String) {
+        val now = favourites().toMutableSet()
+        val added = now.add(brand)
+        if (!added) now.remove(brand)
+        getSharedPreferences("gildongmu", MODE_PRIVATE).edit().putStringSet("fav_brands", now).apply()
+        showAllShops = false
+        flash(if (added) "♥ $brand · 단골 가게만 보여요" else "$brand · 단골 해제", "가는 길 픽업")
+    }                         // one per order screen: a retried "결제" is not a second order
+
+    /** Ask the server which partner shops are near the car's position (off the main thread). */
+    private fun refreshShops(thenOpen: String? = null) {
+        val here = currentPlace() ?: return
+        if (shopLoading) return
+        shopLoading = true
+        io.execute {
+            val v = try { api.shopsNear(here.lat, here.lon) } catch (_: Exception) { null }
+            ui.post {
+                shopLoading = false
+                shopFailed = v == null
+                if (v != null) shopView = v
+                if (v == null) { if (thenOpen != null) flash("가까운 가게를 불러올 수 없어요 · 연결을 확인해 주세요", "가는 길 픽업"); return@post }
+                if (thenOpen != null) openList(thenOpen) else if (order == null && note == null) renderAnswers()
+            }
+        }
+    }
+
+    /** The idle slot: what the driver can ask for, from the shops in range. While driving: only what to say. */
     private fun renderErrands() {
-        if (order != null || pickPlaces.isNotEmpty()) return
-        answersList.addView(text(if (touchOk()) "가는 길에 받을 수 있는 곳을 골라 보세요" else "말로 물어보세요: “앞에 드라이브스루 뭐 있어?”", 13f, t.muted, 1),
-            LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
+        if (order != null) return
+        if (!touchOk()) {   // driving: nothing that cannot be used is shown; only what to say
+            answersList.addView(text("운전 중이에요 · 말로 해 보세요", 18f, t.ink, 2), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
+            answersList.addView(text("“커피 마시고 싶어” · “앞에 드라이브스루 뭐 있어?”", 16f, t.accent, 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) })
+            // nothing is taken away while driving: what is on offer stays on screen, to be asked for by voice
+            val v = shopView
+            if (v == null) { if (!shopLoading) refreshShops() }
+            else {
+                val kinds = Errands.kindsIn(v, activeFavs())
+                answersList.addView(text(if (kinds.isEmpty()) "${v.rangeKm.toInt()}km 안에는 받을 수 있는 곳이 없어요"
+                    else "지금 ${v.rangeKm.toInt()}km 안: " + kinds.joinToString(" · ") { Errands.label(it) }, 15f, t.ink, 2),
+                    LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(8) })
+            }
+            return
+        }
+        val here = currentPlace()
+        if (here == null) {   // no position yet: nothing to measure from
+            answersList.addView(text("위치를 확인하고 있어요", 15f, t.muted, 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
+            return
+        }
+        val v = shopView
+        if (v == null) {
+            if (!shopLoading) refreshShops()
+            answersList.addView(text(if (shopFailed) "가까운 가게를 불러올 수 없어요" else "가까운 가게를 찾고 있어요", 15f, t.muted, 1),
+                LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
+            return
+        }
+        val favs = activeFavs()
+        val kinds = Errands.kindsIn(v, favs)
+        val km = v.rangeKm.toInt()
+        if (kinds.isEmpty()) {   // nothing inside the range: say so, show no buttons
+            answersList.addView(text(if (favs.isEmpty()) "${km}km 안에 받을 수 있는 곳이 없어요" else "${km}km 안에 단골 가게가 없어요", 18f, t.ink, 2),
+                LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
+            if (favs.isNotEmpty()) answersList.addView(actionBtn("전체 가게 보기", t.surface, t.muted, 15f) { showAllShops = true; renderAnswers() },
+                LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(8) })
+            else v.nearestName?.let {
+                answersList.addView(text("가장 가까운 곳은 $it · ${"%.1f".format(v.nearestKm)}km", 14f, t.muted, 1),
+                    LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
+            }
+            return
+        }
+        answersList.addView(text("${km}km 안 제휴 가게(샘플) · 무엇이 필요하세요?", 13f, t.muted, 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
         val row = LinearLayout(this)
-        Errands.TYPES.forEach { type ->
-            row.addView(text(type, 13f, t.ink, 2).apply {
+        kinds.forEach { kind ->
+            row.addView(text(Errands.label(kind), 15f, t.ink, 2).apply {
                 gravity = Gravity.CENTER
                 maxLines = 2
                 background = outline()
                 setPadding(dp(2), dp(14), dp(2), dp(14))
-                alpha = if (touchOk()) 1f else 0.5f
-                if (touchOk()) { setOnClickListener { openList(type) }; press(this) }
+                setOnClickListener { openList(kind) }; press(this)
             }, LinearLayout.LayoutParams(0, -2, 1f).apply { if (row.childCount > 0) leftMargin = dp(6) })
         }
         answersList.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
-    }
-
-    private fun openList(type: String) {
-        val list = Errands.near(type)
-        pickedCar = null; profileOpen = false; pendingReport = null; order = null
-        if (list.isEmpty()) { pickPlaces = emptyList(); flash("가는 길에 ${type}이 없어요", "가는 길 픽업"); return }
-        pickType = type; pickPlaces = list
-        if (!info.canSend || !touchOk())
-            speakThen("${type} ${list.size}곳 있어요. " + list.joinToString(". ") { "${it.name} ${"%.1f".format(it.km)}킬로" } + ". 어디로 할까요?", "confirm")
-        renderAnswers()
-    }
-
-    /** Candidates, big: name on the left, distance / arrival / waiting on the right. */
-    private fun renderPickList() {
-        answersCount.text = ""
-        attentionCard.removeAllViews()
-        attentionCard.visibility = View.VISIBLE
-        attentionCard.addView(text("$pickType · 가는 길 ${pickPlaces.size}곳 (샘플)", 13f, t.muted, 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(8) })
-        val canTap = info.canSend && touchOk()
-        pickPlaces.forEach { p ->
-            val row = LinearLayout(this).apply {
-                gravity = Gravity.CENTER_VERTICAL
-                background = outline()
-                setPadding(dp(12), dp(11), dp(12), dp(11))
-                if (canTap) { setOnClickListener { openOrder(p) }; press(this) }
-            }
-            row.addView(text(p.name, 16f, t.ink, 2).apply { maxLines = 1 }, LinearLayout.LayoutParams(0, -2, 1f))
-            row.addView(text("${"%.1f".format(p.km)}km · 도착 ${p.etaMin()}분 · 대기 ${p.waitMin}분", 12f, t.muted))
-            attentionCard.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
+        if (favourites().isNotEmpty()) {   // the driver has favourites: say which view this is, and let them switch
+            answersList.addView(text(if (showAllShops) "전체 가게를 보는 중 · ★ 단골만 보기" else "★ 단골 가게만 보는 중 · 전체 보기", 14f, t.accent, 1).apply {
+                setPadding(0, dp(8), dp(8), dp(4))
+                setOnClickListener { showAllShops = !showAllShops; renderAnswers() }
+            }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
         }
-        if (canTap) attentionCard.addView(actionBtn("닫기", t.surface, t.muted, 15f) { closePick() }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
-        else attentionCard.addView(text("가게 이름이나 “첫 번째”라고 말해 주세요", 13f, t.muted), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) })
     }
 
-    private fun closePick() { pickPlaces = emptyList(); renderAnswers() }
-
-    private fun answerPick(said: String) {
-        val w = said.replace(" ", "")
-        if (listOf("취소", "그만", "됐어", "닫").any { it in w }) { closePick(); return }
-        val p = Errands.pick(pickPlaces, said)
-        if (p != null) openOrder(p) else speakThen("가게 이름이나 첫 번째, 두 번째라고 말해 주세요", "confirm")
+    /**
+     * One tap, no choosing: the nearest shop that has what was asked for, with one item.
+     * "다른 곳" shows the next shop; the shop's phone number is part of its data, shown on the card.
+     */
+    private fun openList(key: String) {
+        val v = shopView
+        if (v == null) { refreshShops(key); return }
+        val list = Errands.picks(v, key, activeFavs())
+        pickedCar = null; profileOpen = false; pendingReport = null; order = null
+        if (list.isEmpty()) {
+            alts = emptyList()
+            val msg = if (activeFavs().isEmpty()) "${v.rangeKm.toInt()}km 안에 ${Errands.label(key)}을 받을 수 있는 곳이 없어요"
+                else "단골 가게 중에는 ${Errands.label(key)}을 받을 곳이 5km 안에 없어요 · 전체 보기를 눌러 보세요"
+            flash(msg, "가는 길 픽업")
+            if (!info.canSend || !touchOk()) speak(msg)
+            return
+        }
+        alts = list; altIdx = 0
+        openOrder(list[0])
     }
 
-    private fun openOrder(p: Shop) {
-        order = p; pickPlaces = emptyList()
-        if (!info.canSend || !touchOk())
-            speakThen("${p.name} 인기 메뉴는 ${p.item}, ${p.priceText()}. ${p.etaMin()}분 뒤 도착이라 맞춰 준비해요. 결제할까요?", "confirm")
+    private fun nextShop() {
+        if (alts.size < 2) return
+        altIdx = (altIdx + 1) % alts.size
+        openOrder(alts[altIdx])
+    }
+
+    private fun openOrder(p: Pick) {
+        order = p
+        orderKey = java.util.UUID.randomUUID().toString()
+        if (!info.canSend || !touchOk()) speakThen(Errands.spoken(p), "confirm")
         renderAnswers()
     }
 
-    /** One look: what, where, how much, when it will be ready. The payment is a mock: nothing is charged. */
-    private fun renderOrder(p: Shop) {
+    /** One look: where, which item, how much, when it will be ready. The payment is a mock: nothing is charged. */
+    private fun renderOrder(p: Pick) {
+        val s = p.shop
         answersCount.text = ""
         attentionCard.removeAllViews()
         attentionCard.visibility = View.VISIBLE
-        attentionCard.addView(text("샘플 매장 · 시험용이라 실제 결제는 되지 않아요", 13f, t.muted, 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(8) })
-        attentionCard.addView(text("${p.name} · ${p.item}", 20f, t.ink, 2), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(3) })
-        val cook = p.cookInMin()
-        attentionCard.addView(text("${p.priceText()} · 도착 ${p.etaMin()}분 뒤 · " + (if (cook > 0) "${cook}분 뒤 조리 시작" else "바로 조리 시작"), 15f, t.muted, 1),
+        attentionCard.addView(text("${s.place} · 샘플 제휴 가게 · 시험용이라 실제 결제는 되지 않아요", 13f, t.muted, 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(8) })
+        // the shop's name with the usual heart on the right: tap it to keep this brand as a favourite
+        val titleRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        titleRow.addView(text("${s.name} · ${"%.1f".format(s.km)}km", 20f, t.ink, 2), LinearLayout.LayoutParams(0, -2, 1f))
+        val fav = s.brand in favourites()
+        titleRow.addView(text(if (fav) "♥" else "♡", 28f, if (fav) t.moving else t.muted, 0).apply {
+            gravity = Gravity.CENTER
+            if (touchOk() && info.canSend) { setOnClickListener { toggleFavourite(s.brand) }; press(this) }
+            contentDescription = if (fav) "단골 해제" else "단골로 등록"
+        }, LinearLayout.LayoutParams(dp(48), dp(40)))
+        attentionCard.addView(titleRow, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(3) })
+        attentionCard.addView(text("${p.item.name} · ${p.item.priceText()}", 17f, t.ink, 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(3) })
+        attentionCard.addView(text("도착 ${s.etaMin}분 뒤 · " + (if (s.cookInMin > 0) "${s.cookInMin}분 뒤 조리 시작" else "바로 조리 시작") + " · ☎ ${s.phone}", 14f, t.muted, 1),
             LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(3) })
         if (!info.canSend || !touchOk()) {
-            attentionCard.addView(text("“결제”라고 말하면 주문해요", 13f, t.muted), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) })
+            attentionCard.addView(text("“결제”, “메뉴”, “다른 곳”, “단골”, “취소”라고 말해 주세요", 13f, t.muted), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) })
             return
         }
         val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         row.addView(actionBtn("결제하기", t.accent, Color.WHITE, 18f) { payOrder() }, LinearLayout.LayoutParams(0, -2, 1.6f))
-        row.addView(actionBtn("취소", t.surface, t.muted, 18f) { cancelOrder() }, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
+        if (alts.size > 1) row.addView(actionBtn("다른 곳", t.surface, t.muted, 16f) { nextShop() }, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
+        row.addView(actionBtn("취소", t.surface, t.muted, 16f) { cancelOrder() }, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
         attentionCard.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
     }
 
+    /** Pay: the order goes to the server, which records it for the shop and answers with a receipt number. */
     private fun payOrder() {
         val p = order ?: return
-        order = null
-        val no = Errands.receiptNo()
-        val cook = p.cookInMin()
-        speak("주문했어요. 접수번호 $no")
-        flash("${p.name} · ${p.item} · ${p.priceText()} · 접수번호 $no · " + (if (cook > 0) "${cook}분 뒤 조리 시작 예정" else "바로 조리 시작") + " · 시험용, 실제 결제 없음", "주문 접수", 8_000)
+        val here = currentPlace()
+        if (here == null) { flash("아직 위치를 몰라요", "가는 길 픽업"); return }
+        val key = orderKey
+        io.execute {
+            val r = try { api.orderShop(p.shop.id, p.item.name, here.lat, here.lon, key) } catch (_: Exception) { null }
+            ui.post {
+                if (order !== p) return@post   // cancelled meanwhile
+                if (r == null) { flash("주문을 보내지 못했어요 · 연결을 확인해 주세요", "가는 길 픽업"); return@post }
+                order = null; alts = emptyList()
+                speak("주문했어요. 접수번호 ${r.receipt}")
+                flash("${r.shop} · ${r.item} · ${"%,d원".format(r.price)} · 접수번호 ${r.receipt} · " +
+                    (if (r.cookInMin > 0) "${r.cookInMin}분 뒤 조리 시작 예정" else "바로 조리 시작") + " · 시험용, 실제 결제 없음", "주문 접수", 8_000)
+            }
+        }
     }
 
     private fun cancelOrder() {
-        order = null
+        order = null; alts = emptyList()
         flash("주문을 취소했어요", "가는 길 픽업")
     }
 
     private fun answerOrder(said: String) {
         val w = said.replace(" ", "")
+        val p = order ?: return
         when {
             listOf("취소", "그만", "아니", "됐어").any { it in w } -> cancelOrder()
+            listOf("메뉴", "뭐있", "가격", "얼마").any { it in w } -> speakThen(Errands.menuSpoken(p.shop), "confirm")
+            listOf("단골", "즐겨찾기").any { it in w } -> toggleFavourite(p.shop.brand)
+            listOf("다른", "다음", "딴").any { it in w } -> nextShop()
             listOf("결제", "주문", "네", "응", "좋아", "그래").any { it in w } -> payOrder()
-            else -> speakThen("결제 또는 취소라고 말해 주세요", "confirm")
+            else -> speakThen("결제, 메뉴, 다른 곳, 단골, 취소 중에 말해 주세요", "confirm")
         }
     }
 
@@ -1414,7 +1566,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun listenForConfirm() {
-        if ((heardText != null && confirmByVoice) || nudge != null || hazard != null || order != null || pickPlaces.isNotEmpty()) voice?.listen()
+        if ((heardText != null && confirmByVoice) || nudge != null || hazard != null || order != null) voice?.listen()
     }
 
     private fun answerConfirm(said: String) {
@@ -1663,7 +1815,6 @@ class MainActivity : AppCompatActivity() {
         when {
             spoken != null -> renderHeard(spoken)
             order != null -> renderOrder(order!!)
-            pickPlaces.isNotEmpty() -> renderPickList()
             reporting != null -> renderReportReasons(reporting)
             profileOpen -> renderProfile()
             picked != null -> renderPicked(picked)
@@ -1751,7 +1902,9 @@ class MainActivity : AppCompatActivity() {
     // ---------------------------------------------------------------- my profile
 
     /** Where we are: the navigation's position while it is current, else the platform GPS (null: no position at all). */
-    private fun currentPlace(): Place? = navi?.fresh() ?: gps.fresh()
+    private var fakePlace: Place? = null   // debug builds only: --ef fake_lat / fake_lon, to try the pickup range without a drive
+
+    private fun currentPlace(): Place? = fakePlace ?: navi?.fresh() ?: gps.fresh()
 
     /** Editing the profile only while the car stands still (정차: parked or stopped in traffic), never while moving.
      *  Note for review: the emulator measured the stopped-in-traffic state with the "no setup" flag (0x40) set, the same
@@ -1859,7 +2012,9 @@ class MainActivity : AppCompatActivity() {
         val foot = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         foot.addView(profileChip(if (myShowModel) "차종 공개 중" else "차종 비공개", myShowModel) { myShowModel = !myShowModel; applyProfile() })
         foot.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
-        foot.addView(actionBtn("완료", t.accent, Color.WHITE, 16f) { profileOpen = false; renderAnswers() },
+        if (!getSharedPreferences("gildongmu", MODE_PRIVATE).getBoolean(PROFILE_KEY, false))
+            foot.addView(actionBtn("건너뛰기", t.surface, t.muted, 16f) { profileDone() }, LinearLayout.LayoutParams(dp(120), -2).apply { rightMargin = dp(8) })
+        foot.addView(actionBtn("완료", t.accent, Color.WHITE, 16f) { profileDone() },
             LinearLayout.LayoutParams(dp(120), -2))
         attentionCard.addView(foot, lp(14))
         attentionCard.addView(text("개인정보 안내 보기", 13f, t.muted, 1).apply {
@@ -2058,7 +2213,9 @@ class MainActivity : AppCompatActivity() {
         private val COLORS = listOf("#00AAD2", "#12B76A", "#F5A524", "#E5446D", "#7A5AF8", "#2E90FA")
         private val MODELS = listOf("캐스퍼", "아반떼", "쏘나타", "그랜저", "코나", "투싼", "싼타페", "팰리세이드", "스타리아",
             "아이오닉 5", "아이오닉 6", "아이오닉 9")
-        private const val CONSENT_KEY = "consent_v1"   // bump the number when what is collected changes: everyone is asked again
+        private const val INTRO_KEY = "intro_v1"       // the first-run explanation was shown
+        private const val PROFILE_KEY = "profile_done"  // the profile was finished or skipped once
+        private const val CONSENT_KEY = "consent_v2"   // bump the number when what is collected changes: everyone is asked again
         private const val PHOTO_DAYS = 30               // same as PHOTO_DAYS in server/app_server.py
         private const val PICK_MS = 15_000L     // the card of a tapped car (or of the report reasons) closes by itself
         private val REPORT_REASONS = listOf("reckless" to "난폭 운전", "rude" to "욕설·비하", "weird" to "이상한 질문",
