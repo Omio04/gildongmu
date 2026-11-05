@@ -29,3 +29,4 @@ demo/work/
 build.log
 server/certs/
 server/static/*.apk
+server/data/

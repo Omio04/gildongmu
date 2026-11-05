@@ -9,8 +9,11 @@ CREATE TABLE IF NOT EXISTS vehicles (
     gear        TEXT NOT NULL DEFAULT 'D',    -- P / R / N / D
     dest        TEXT,
     discoverable INTEGER NOT NULL DEFAULT 1,
-    updated_at  REAL NOT NULL
+    updated_at  REAL NOT NULL,
+    cx          INTEGER NOT NULL DEFAULT 0,   -- spatial grid cell (see core.cell_of): "who is near me" reads the cells around, not every car
+    cy          INTEGER NOT NULL DEFAULT 0
 );
+CREATE INDEX IF NOT EXISTS idx_vehicle_cell ON vehicles(cx, cy);
 
 CREATE TABLE IF NOT EXISTS messages (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,

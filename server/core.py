@@ -12,7 +12,7 @@ PRESETS = {
     "HELLO": "안녕하세요! {arg} 가는 중이에요",
     "ASK_FOOD": "근처 맛집 있나요?",
     "ASK_REST": "다음 휴게소 혼잡한가요?",
-    "ASK_ACCIDENT": "앞에 사고인가요?",
+    "ASK_ACCIDENT": "왜 막히는지 아세요?",
     "REPLY_OK": "괜찮아요",
     "REPLY_BUSY": "혼잡해요",
     "REPLY_PLACE": "{arg} 추천해요",
@@ -45,20 +45,52 @@ def haversine_m(lat1, lon1, lat2, lon2):
     return 2 * r * math.asin(math.sqrt(a))
 
 
+def relative(me_lat, me_lon, me_heading, lat, lon):
+    """Where another car is, seen from mine: (ahead_m, lateral_m). Ahead is along my heading (negative = behind),
+    lateral is to my right (negative = left). Flat-earth maths: right for a few hundred metres."""
+    north = (lat - me_lat) * 111_000.0
+    east = (lon - me_lon) * 111_000.0 * math.cos(math.radians(me_lat))
+    h = math.radians(me_heading)
+    ahead = north * math.cos(h) + east * math.sin(h)
+    lateral = east * math.cos(h) - north * math.sin(h)
+    return ahead, lateral
+
+
 def angle_diff(a, b):
     return abs((a - b + 180) % 360 - 180)
 
 
+CELL_M = 500.0    # side of a grid cell; "near" then means the cells within reach(radius) around mine
+GRID_LAT = 37.0   # one latitude for the whole grid, so every car uses the same cell borders (Korea spans 33-39 N)
+_LON_M = 111_000.0 * math.cos(math.radians(GRID_LAT))   # metres per degree of longitude on the grid
+NARROWEST = 0.9   # a cell is never narrower than this share of CELL_M (true up to about 43 N): reach() relies on it
+
+
+def cell_of(lat, lon):
+    """The grid cell a position falls in. The grid is one fixed lattice: a cell is 500 m north-south and 475-525 m
+    east-west anywhere in Korea. (Each car must NOT use its own latitude here: longitude is ~127 degrees, so a tiny
+    difference in cos(lat) between two cars becomes whole cells of difference.)"""
+    return math.floor(lon * _LON_M / CELL_M), math.floor(lat * 111_000.0 / CELL_M)
+
+
+def reach(radius_m):
+    """How many cells around mine can hold a car within radius_m, counting the narrowest cell."""
+    return math.ceil(radius_m / (CELL_M * NARROWEST))
+
+
 def upsert_vehicle(db, vid, nickname, model, lat, lon, heading=0, speed_kmh=0,
                    gear="D", dest=None, discoverable=True, now=None):
+    cx, cy = cell_of(lat, lon)
     db.execute(
-        """INSERT INTO vehicles VALUES (?,?,?,?,?,?,?,?,?,?,?)
+        """INSERT INTO vehicles(id, nickname, model, lat, lon, heading, speed_kmh, gear, dest, discoverable,
+                                updated_at, cx, cy)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
            ON CONFLICT(id) DO UPDATE SET nickname=excluded.nickname, lat=excluded.lat,
            lon=excluded.lon, heading=excluded.heading, speed_kmh=excluded.speed_kmh,
            gear=excluded.gear, dest=excluded.dest, discoverable=excluded.discoverable,
-           updated_at=excluded.updated_at""",
+           updated_at=excluded.updated_at, cx=excluded.cx, cy=excluded.cy""",
         (vid, nickname, model, lat, lon, heading, speed_kmh, gear, dest,
-         int(discoverable), now if now is not None else time.time()))
+         int(discoverable), now if now is not None else time.time(), cx, cy))
     db.commit()
 
 
@@ -82,7 +114,12 @@ def nearby(db, vid, radius_m=300, same_direction=False, now=None):
     now = now if now is not None else time.time()
     me = _vehicle(db, vid)
     out = []
-    for v in db.execute("SELECT * FROM vehicles WHERE id!=? AND discoverable=1", (vid,)):
+    # only the cells around me, through the (cx, cy) index: the cost follows the cars nearby, not all cars
+    r = reach(radius_m)
+    cx, cy = cell_of(me["lat"], me["lon"])
+    for v in db.execute("""SELECT * FROM vehicles WHERE id!=? AND discoverable=1
+                           AND cx BETWEEN ? AND ? AND cy BETWEEN ? AND ?""",
+                        (vid, cx - r, cx + r, cy - r, cy + r)):
         if now - v["updated_at"] > STALE_SECONDS or is_blocked(db, vid, v["id"]):
             continue
         d = haversine_m(me["lat"], me["lon"], v["lat"], v["lon"])
@@ -91,9 +128,11 @@ def nearby(db, vid, radius_m=300, same_direction=False, now=None):
         same_dir = angle_diff(me["heading"], v["heading"]) <= 45
         if same_direction and not same_dir:
             continue
+        ahead, lateral = relative(me["lat"], me["lon"], me["heading"], v["lat"], v["lon"])
         out.append({"id": v["id"], "nickname": v["nickname"], "model": v["model"],
                     "dest": v["dest"], "distance_m": round(d, -1), "same_direction": same_dir,
-                    "same_dest": bool(me["dest"] and me["dest"] == v["dest"])})
+                    "same_dest": bool(me["dest"] and me["dest"] == v["dest"]),
+                    "ahead_m": int(round(ahead / 5.0) * 5), "lateral_m": int(round(lateral))})
     # same destination first, then closest
     out.sort(key=lambda x: (not x["same_dest"], x["distance_m"]))
     return out
@@ -133,6 +172,23 @@ def inbox(db, vid):
 def block(db, blocker, blocked):
     db.execute("INSERT OR IGNORE INTO blocks VALUES (?,?)", (blocker, blocked))
     db.commit()
+
+
+REPORT_REASONS = {   # why a driver may report another: picked by touch, never typed
+    "reckless": "난폭 운전",
+    "rude": "욕설·비하",
+    "weird": "이상한 질문",
+    "spam": "광고·스팸",
+    "fake": "허위 제보",
+    "other": "기타",
+}
+
+
+def clean_reason(raw):
+    """The reason code if it is one of REPORT_REASONS; None for anything else (a missing reason is "other")."""
+    if raw is None or raw == "":
+        return "other"
+    return raw if raw in REPORT_REASONS else None
 
 
 def report(db, reporter, target, reason, now=None):

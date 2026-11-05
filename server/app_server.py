@@ -3,19 +3,31 @@
 
 Car app (JSON):
     GET  /api/nearby?vid=me
-    POST /api/send    {"preset" | "spoken","to","arg","gear","voice","restricted"}   one-touch or spoken question;
-                      "restricted" = the vehicle forbids touch (all UX restrictions set): only "voice" gets through;
-                      "to" = one car, left out = everyone around (up to 3 answers, all visible to the neighbours)
-    POST /api/report  {"msg_id","reason"}                      report a neighbour: blocked, answers no longer shown
+    POST /api/pos     {"lat","lon","heading"}                              where this car is (from the navigation)
+    GET/POST /api/me/profile {"adjective","animal","color","model","show_model"}   this car's own profile, list-only
+    POST /api/send    {"preset" | "spoken","arg","gear","voice","restricted"}   the one question ("왜 막혀?"), by tap or
+                      voice; "restricted" = the vehicle forbids touch (all UX restrictions set): only "voice" gets through.
+                      Any other sentence said by voice (and confirmed by the driver) goes out as a road message instead:
+                      to everyone around, never to one car. Up to 3 answers, all visible to the neighbours.
+    POST /api/ask     {"text","to"}                            a spoken question the driver confirmed: to everyone around, or
+                      to the one nearby car "to" (that car only; one answer closes it; the same car once a minute)
+    POST /api/report  {"msg_id","reason"}                      report a neighbour: blocked, answers no longer shown.
+                      "reason" is one of core.REPORT_REASONS (reckless / rude / weird / spam / fake / other), picked by touch
+    POST /api/questions/report {"qid","reason"}                report a strange question: whoever asked it is blocked
+    POST /api/report_car {"vid","reason"}                      the same, for a car picked on the road
     GET  /api/inbox?vid=me&after=<id>
     POST /api/thanks  {"msg_id"}                               "고마워요" to whoever answered
     GET  /api/ahead?vid=me                                     next rest area + liked restaurant
     GET  /api/situation                                        what neighbours reported about the road ahead
     POST /api/inform  {"kind"}                                 "알리기": tell the road what you see (no question needed)
-    GET/POST /api/mood {"mood"}                                "한마디": a fixed feeling shown as a bubble over our car
-    POST /api/n/mood {"vid","mood"}                            the same, from a neighbour's phone
+    GET  /api/hazard/proposal                                  the car thinks it sees roadkill / falling rocks / a pothole
+    POST /api/hazard/detected {"kind","confidence","source"}  the entrance for a camera pipeline (nothing is reported yet)
+    POST /api/hazard/report {"kind","proposal_id"}             the driver's one tap: a ticket number comes back (접수됨)
+    GET  /api/chat?vid=me                                      what others said lately (short spoken messages to everyone)
+    POST /api/chat/report {"id"}                               report a message: its sender is off the road
+    POST /api/n/say {"vid","text"}                             a phone neighbour says something short to everyone
     POST /api/trip    {"dest"}
-    GET  /api/demo/event?kind=accident|rest                    a neighbour speaks up unprompted (demo)
+    GET  /api/demo/event?kind=rockfall|roadkill|pothole        test trigger for the camera pipeline's entrance
 Neighbour phones (open http://<this PC>:8080/neighbor):
     POST /api/n/skip {"vid","qid"}   POST /api/n/pause {"vid","paused"}      decline one question / stop receiving
     GET  /api/n/options                                       the lists a profile is built from
@@ -23,10 +35,12 @@ Neighbour phones (open http://<this PC>:8080/neighbor):
     POST /api/n/profile (same fields + "vid")                 change it later; nothing typed ever reaches other drivers   GET /api/n/poll?vid=   POST /api/n/answer {"vid","qid","option"|"spoken"}
     Over https (port+363, self-signed) the page can use the phone's microphone.
 
-Real people on phones answer when they are around. If nobody answers in time (or nobody is
-connected), simulated neighbours and public-data fallbacks answer, so the app always works.
+Everything on the road is real. Each app reports where it is (POST /api/pos from the car, POST /api/n/pos
+{"vid","lat","lon","heading"} from a phone); the server measures the distance and who is ahead, and only cars with a
+fresh position within RADIUS_M appear. With nobody around, "왜 막혀요?" says so instead of inventing an answer.
 """
 import json
+import os
 import pathlib
 import shutil
 import socket
@@ -39,32 +53,36 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
+import board as boardmod
+import chat as chatmod
 import core
+import hazards as hzmod
 import live
+import questions as qmod
 
 ME = "me"
-APP_PRESETS = {"HELLO", "ASK_FOOD", "ASK_REST", "ASK_ACCIDENT"}  # what a driver may send
+APP_PRESETS = {"ASK_ACCIDENT"}  # the one question the car asks: why is the road stuck
 M_PER_DEG_LAT = 111_000.0
 LAT0, LON0 = 36.7500, 127.1500
-HUMAN_WAIT = 15.0          # seconds a real neighbour gets before the simulated one answers
-LIVE_OFFSETS_M = [30, -30, 70, -70, 110, 150]   # where phone neighbours sit around the car
-LIVE_MODELS = ["투싼", "아이오닉 5", "K5", "쏘나타", "EV6", "그랜저"]
+QUESTION_POINTS = 3         # for answering a neighbour's question
+HAZARD_POINTS = 5           # for a confirmed hazard report: the road is safer for everyone behind
+POS_FRESH = 30.0           # seconds: a position older than this is not shown (the car left or the phone went to sleep)
+RADIUS_M = 300             # who counts as "around"
 STATIC = pathlib.Path(__file__).with_name("static")
-
-# (id, nickname, model, dest, metres ahead (+) / behind (-))
-NEIGHBOURS = [
-    ("car03", "귀성길곰", "아이오닉 5", "대구", 40),
-    ("car07", "느긋한토끼", "그랜저", "대구", 90),
-    ("car01", "졸린사자", "쏘나타", "부산", -60),
-    ("car05", "달리는펭귄", "EV6", "광주", 120),
-]
 
 lock = threading.RLock()  # one shared connection, used from several handler threads
 db = None
 room = live.LiveRoom()
 reports = live.Reports()
-car_mood = {"key": None, "at": 0.0}   # the bubble over our own car
-SIM_MOODS = ["home", "sleepy", "cheer", "hungry", "escape"]
+DATA_DIR = pathlib.Path(os.environ.get("GILDONGMU_DATA") or pathlib.Path(__file__).with_name("data"))   # tickets + photos survive a restart
+PHOTO_DAYS = 30             # photos are the most personal thing kept: deleted after this many days
+hazards = hzmod.Hazards(store=DATA_DIR)   # what the car sees on the road, and the reports the driver confirms
+hazards.purge_old(PHOTO_DAYS)
+road_chat = chatmod.Chat()   # short spoken messages to everyone around, shown beside the sender's car
+inbox_q = qmod.Questions()   # what people ask each other: private to one car, or public to all
+board = boardmod.Board()   # the road notice board: reports, taps, points
+positions = {}   # vid -> {"lat","lon","heading","at"}: what each car's app last told us. Nothing is made up.
+me_profile = {"nick": None, "color": live.COLORS[0], "model": "", "show_model": True}   # this car's own profile (from the list-only picker)
 
 
 def _open():
@@ -76,29 +94,42 @@ def _open():
 
 def seed():
     _open()
-    core.upsert_vehicle(db, ME, "나", "아이오닉 6", LAT0, LON0, heading=180, speed_kmh=0, gear="D", dest="대구")
-    for vid, nick, model, dest, ahead_m in NEIGHBOURS:
-        lat = LAT0 - ahead_m / M_PER_DEG_LAT  # heading south: ahead means smaller latitude
-        core.upsert_vehicle(db, vid, nick, model, lat, LON0 + 0.00004, heading=180, speed_kmh=2, gear="D", dest=dest)
-    db.executemany("INSERT INTO places(kind,name,lat,lon,congestion,likes) VALUES (?,?,?,?,?,?)", [
-        ("restarea", "천안삼거리휴게소", LAT0 - 5000 / M_PER_DEG_LAT, LON0, 1, 0),
-        ("restarea", "안성휴게소", LAT0 - 20000 / M_PER_DEG_LAT, LON0, 2, 0),
-        ("restaurant", "호두과자 맛집", LAT0 - 6000 / M_PER_DEG_LAT, LON0, None, 3),
-    ])
+    # our own row exists so messages have somebody to belong to; it has no real position until the app reports one
+    core.upsert_vehicle(db, ME, "나", "", LAT0, LON0, heading=0, speed_kmh=0, gear="D", dest=None)
     db.commit()
 
 
+def report_position(vid, data):
+    """A car's app (or a phone) says where it is. Only a real position is kept."""
+    place = hzmod.clean_place(data)
+    if place is None:
+        return False
+    positions[vid] = {"lat": place["lat"], "lon": place["lon"], "heading": place.get("heading", 0.0), "at": time.time()}
+    return True
+
+
+def _fresh(vid, now):
+    pos = positions.get(vid)
+    return pos if pos and now - pos["at"] <= POS_FRESH else None
+
+
 def _sync():
-    """Keep every vehicle fresh, and show a phone neighbour on the road only while its page is open."""
+    """Put every car where its app last said it is. A car with no recent position is not on the road."""
     now = time.time()
     active = {p.vid for p in room.active()}
-    for i, p in enumerate(room.players.values()):
-        off = LIVE_OFFSETS_M[i % len(LIVE_OFFSETS_M)]
-        core.upsert_vehicle(db, p.vid, p.nick, LIVE_MODELS[i % len(LIVE_MODELS)] if p.show_model else "차종 비공개",
-                            LAT0 - off / M_PER_DEG_LAT, LON0 - 0.00004, heading=180, speed_kmh=2, gear="D",
-                            dest=p.dest if p.show_dest else None,
-                            discoverable=p.vid in active and not p.blocked, now=now)
-    db.execute("UPDATE vehicles SET updated_at=? WHERE id NOT LIKE 'live-%'", (now,))
+    mine = _fresh(ME, now)
+    if mine:
+        core.upsert_vehicle(db, ME, me_profile["nick"] or "나", me_profile["model"] if me_profile["show_model"] else "",
+                            mine["lat"], mine["lon"], heading=mine["heading"], speed_kmh=0, gear="D",
+                            dest=None, discoverable=True, now=now)
+    for p in room.players.values():
+        pos = _fresh(p.vid, now)
+        if pos:
+            core.upsert_vehicle(db, p.vid, p.nick, "차종 비공개", pos["lat"], pos["lon"], heading=pos["heading"],
+                                speed_kmh=0, gear="D", dest=p.dest if p.show_dest else None,
+                                discoverable=p.vid in active and not p.blocked, now=now)
+        else:
+            db.execute("UPDATE vehicles SET discoverable=0 WHERE id=?", (p.vid,))
     db.commit()
 
 
@@ -109,12 +140,21 @@ def _name(vid):
     return row["nickname"] if row else vid
 
 
-def _post(from_id, to_id, text, auto=0):
-    """auto: 0 simulated neighbour, 1 public data, 2 a real person on a phone."""
+def _post(from_id, to_id, text, auto=0, tag=""):
+    """auto: 2 a real person on a phone (0 and 1 are kept for old rows)."""
     cur = db.execute("INSERT INTO messages(from_id,to_id,preset,arg,auto,created_at) VALUES (?,?,?,?,?,?)",
-                     (from_id, to_id, "REPLY_TEXT", text, auto, time.time()))
+                     (from_id, to_id, "REPLY_TEXT", f"{text}||||{tag}" if tag else text, auto, time.time()))
     db.commit()
-    return cur.lastrowid
+    return cur.lastrowid   # arg = "text||coupon||tag": the tag is the cause the answering car named, shown on the road
+
+
+def _is_ahead(vid):
+    """True when that car is in front of mine (measured from the positions the apps reported)."""
+    now = time.time()
+    me, other = _fresh(ME, now), _fresh(vid, now)
+    if not me or not other:
+        return False
+    return core.relative(me["lat"], me["lon"], me["heading"], other["lat"], other["lon"])[0] > 0
 
 
 def ahead_info():
@@ -130,7 +170,9 @@ def ahead_info():
 REST_WORD = {"free": "한산해요", "normal": "보통이에요", "busy": "혼잡해요"}
 ANSWER_WORD = {
     "ASK_FOOD": {"walnut": "호두과자 맛집이 좋아요", "udon": "휴게소 우동이 괜찮아요"},
-    "ASK_ACCIDENT": {"accident": "앞쪽에 사고 처리 중이에요", "work": "앞쪽에서 공사 중이에요", "jam": "그냥 정체예요, 곧 풀려요"},
+    "ASK_ACCIDENT": {"accident": "앞쪽에 사고 처리 중이에요", "work": "앞쪽에서 공사 중이에요",
+                     "debris": "도로에 낙하물이 있어요", "breakdown": "고장 난 차가 서 있어요",
+                     "merge": "합류 구간이라 막혀요", "crowd": "그냥 차가 많아요, 곧 풀려요"},
     "HELLO": {"hi": "반가워요!", "same": "저도 같은 방향이에요"},
 }
 
@@ -147,54 +189,47 @@ def compose_answer(preset, option):
     return "잘 모르겠어요, 미안해요"
 
 
+def _publish(kind, who, card=True):
+    """One report of the road ahead goes to both places that show it: the "앞 상황" card and the notice board
+    (a camera hazard report skips the card, as before). Returns the board post id (None when not a board kind)."""
+    if card and kind in live.AHEAD_TEXT:
+        reports.add("ahead", kind, who)
+    try:
+        return board.post(kind, who)
+    except boardmod.BoardError:
+        return None
+
+
 def _report(preset, option, who):
     """Share what a neighbour told us with every car on the road."""
-    topic = {"ASK_ACCIDENT": "ahead", "ASK_REST": "rest", "ASK_FOOD": "food"}.get(preset)
+    if preset == "ASK_ACCIDENT" and option != "unknown":
+        _publish(option, who)
+        return
+    topic = {"ASK_REST": "rest", "ASK_FOOD": "food"}.get(preset)
     if topic and option != "unknown":
         reports.add(topic, option, who)
 
 
-def _respond(preset, arg, to=None):
-    """Simulated neighbour / public-data answer. If the question was for one simulated car, that car answers."""
-    with lock:
-        near = core.nearby(db, ME)
-        sims = [n for n in near if not n["id"].startswith("live-")]
-        if to:
-            sims = [n for n in sims if n["id"] == to] or sims
-        if preset == "HELLO":
-            mates = [n for n in sims if n["same_dest"]]
-            if mates:
-                _post(mates[0]["id"], ME, f"반가워요! 저도 {arg} 가요")
-                return
-        if preset == "ASK_REST":
-            info = ahead_info()["rest"]
-            if sims and info:
-                word = {"여유": "여유로워요", "보통": "보통이에요", "혼잡": "혼잡해요"}
-                _post(sims[0]["id"], ME, ", ".join(f"{r['name']}는 {word[r['congestion']]}" for r in info[:2]))
-                _report("ASK_REST", {"여유": "free", "보통": "normal", "혼잡": "busy"}[info[0]["congestion"]], sims[0]["id"])
-                return
-        if preset == "ASK_ACCIDENT" and sims:
-            _post(sims[0]["id"], ME, "앞쪽 사고 처리 중이에요, 곧 풀려요")
-            _report("ASK_ACCIDENT", "accident", sims[0]["id"])
-            return
-        if preset == "ASK_FOOD":  # nobody answers -> public-data fallback
-            food = ahead_info()["food"]
-            if food:
-                _post("PUBLIC_DATA", ME, f"{food[0]['name']} 추천해요||방문 인증 시 10% 할인", auto=1)
-                return
-        _post("PUBLIC_DATA", ME, "지금은 알려 드릴 정보가 없어요", auto=1)
+def _ban(who, reason="inappropriate"):
+    """A reported car is blocked and everything it said or posted leaves the road."""
+    core.report(db, ME, who, reason)   # also blocks
+    reports.remove_by(who)
+    board.remove_by(who)
+    inbox_q.remove_by(who)
+    road_chat.remove_by(who)
+    if who in room.players:
+        room.block(who)
 
 
-def _respond_later(preset, arg, qid, to=None):
-    """Real neighbours get HUMAN_WAIT seconds; otherwise the simulated answer comes after a moment."""
-    if qid is None:
-        threading.Timer(1.2, _respond, (preset, arg, to)).start()
-        return
+def _who_name(who):
+    if who == ME:
+        return "나"
+    p = room.players.get(who)
+    return p.nick if p else _name(who)
 
-    def fallback():
-        if not room.is_answered(qid):
-            _respond(preset, arg, to)
-    threading.Timer(HUMAN_WAIT, fallback).start()
+
+def _board_view(viewer):
+    return {"posts": board.feed(viewer, _who_name), "me": board.me(viewer)}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -278,17 +313,17 @@ class Handler(BaseHTTPRequestHandler):
         with lock:
             _sync()
             if u.path == "/api/nearby":
-                out = core.nearby(db, q.get("vid", ME))
+                viewer = q.get("vid", ME)
+                if not _fresh(viewer, time.time()):
+                    return self._json(200, [])   # we do not know where this car is, so nobody is "around" it
+                out = core.nearby(db, viewer, radius_m=RADIUS_M)
                 for n in out:
-                    n["live"] = n["id"].startswith("live-")
+                    n["live"] = True   # every neighbour here is a real person using the app
                     if n["live"] and n["id"] in room.players:
                         pl = room.players[n["id"]]
                         n["color"] = pl.color
                         n["title"] = live.title_for(pl.helped) if pl.show_title else ""
-                        n["mood"] = room.mood_of(n["id"])
-                    else:
-                        k = (int(time.time() // 25) + sum(map(ord, n["id"]))) % (len(SIM_MOODS) + 3)
-                        n["mood"] = live.MOODS[SIM_MOODS[k]] if k < len(SIM_MOODS) else None
+                    n["say"] = road_chat.say_of(n["id"])   # what this car said out loud lately (a bubble beside it)
                 out.sort(key=lambda n: not n["live"])  # real neighbours first (stable: keeps distance order)
                 return self._json(200, out)
             if u.path == "/api/inbox":
@@ -297,35 +332,44 @@ class Handler(BaseHTTPRequestHandler):
                                   (q.get("vid", ME), after)).fetchall()
                 out = []
                 for r in rows:
-                    text, _, coupon = core.render(r["preset"], r["arg"]).partition("||")
-                    out.append({"id": r["id"], "from": _name(r["from_id"]), "text": text, "coupon": coupon,
+                    text, _, rest = core.render(r["preset"], r["arg"]).partition("||")
+                    coupon, _, tag = rest.partition("||")
+                    out.append({"id": r["id"], "from": _name(r["from_id"]), "text": text, "coupon": coupon, "tag": tag,
                                 "auto": r["auto"] == 1, "human": r["auto"] == 2})
                 return self._json(200, out)
-            if u.path == "/api/mood":
-                key = car_mood["key"] if time.time() - car_mood["at"] <= live.MOOD_SECONDS else None
-                return self._json(200, {"mood": live.MOODS.get(key)})
+            if u.path == "/api/hazard/proposal":   # does the car think it sees something? (the driver decides)
+                return self._json(200, {"proposal": hazards.proposal()})
+            if u.path == "/api/hazard/mine":
+                return self._json(200, {"items": hazards.mine(ME)})
+            if u.path == "/api/chat":
+                return self._json(200, {"items": road_chat.recent(q.get("vid", ME), _who_name)})
             if u.path == "/api/ahead":
                 return self._json(200, ahead_info())
+            if u.path == "/api/questions":
+                return self._json(200, {"items": inbox_q.feed(q.get("vid", ME), _who_name)})
+            if u.path == "/api/board":
+                return self._json(200, _board_view(q.get("vid", ME)))
             if u.path == "/api/situation":
                 info = ahead_info()["rest"]
                 return self._json(200, reports.summary(info[0]["name"] if info else None))
+            if u.path == "/api/me/profile":
+                return self._json(200, {**me_profile, "models": live.MODELS})
             if u.path == "/api/n/options":
                 return self._json(200, {"adjectives": live.ADJECTIVES, "animals": live.ANIMALS,
-                                        "colors": live.COLORS, "destinations": live.DESTINATIONS,
-                                        "moods": [{"id": k, "text": v} for k, v in live.MOODS.items()]})
+                                        "colors": live.COLORS, "destinations": live.DESTINATIONS})
             if u.path == "/api/n/poll":
                 try:
-                    return self._json(200, room.poll(q.get("vid", "")))
+                    polled = room.poll(q.get("vid", ""))
+                    polled["reward"] = board.me(q.get("vid", ""))   # the phone shows its own points and grade
+                    return self._json(200, polled)
                 except live.LiveError as e:
                     return self._json(404, {"error": str(e)})
-            if u.path == "/api/demo/event":
-                near = core.nearby(db, ME)
-                if not near:
-                    return self._json(200, {"ok": False})
-                text = {"accident": "앞쪽 사고 처리 중이에요, 곧 풀려요",
-                        "rest": "천안삼거리휴게소는 지금 한산해요"}.get(q.get("kind", "accident"), "안전운전하세요")
-                _post(near[0]["id"], ME, text)
-                return self._json(200, {"ok": True})
+            if u.path == "/api/demo/event":   # test trigger for the camera pipeline's entrance: "the camera sees X"
+                kind = q.get("kind", "")
+                if kind in hzmod.KINDS and kind != "debris":
+                    hazards.detect(kind, 0.92, "camera-test")
+                    return self._json(200, {"ok": True})
+                return self._json(400, {"ok": False})
         self._json(404, {"error": "not found"})
 
     def _post_request(self):
@@ -341,6 +385,23 @@ class Handler(BaseHTTPRequestHandler):
                 db.execute("UPDATE vehicles SET dest=? WHERE id=?", (data.get("dest"), ME))
                 db.commit()
                 return self._json(200, {"ok": True})
+
+            if u.path == "/api/me/profile":   # the driver's own profile, picked from lists: what other cars see
+                new = live.clean_profile(data)
+                if new["nick"] is None:
+                    new["nick"] = me_profile["nick"]   # no valid name sent: keep the one we have
+                me_profile.update(new)
+                return self._json(200, {**me_profile, "models": live.MODELS})
+
+            if u.path == "/api/pos":   # the car's app: where we are (from the navigation)
+                return self._json(200, {"ok": report_position(ME, data)})
+
+            if u.path == "/api/n/pos":   # a phone neighbour: where it is (from the phone's GPS)
+                vid = data.get("vid", "")
+                if vid not in room.players:
+                    return self._json(404, {"error": "unknown neighbour"})
+                room.touch(vid)
+                return self._json(200, {"ok": report_position(vid, data)})
 
             if u.path == "/api/n/join":
                 return self._json(200, {"vid": room.join(
@@ -358,39 +419,107 @@ class Handler(BaseHTTPRequestHandler):
 
             if u.path == "/api/n/answer":
                 option = data.get("option", "")
+                if not option and data.get("text"):   # a spoken reply the neighbour confirmed on the phone
+                    option = "t:" + str(data["text"])
                 if not option and data.get("spoken"):  # said out loud: map the words to one of the fixed answers
                     q = room.questions.get(int(data.get("qid", 0)))
                     option = (live.match_answer(q["preset"], data["spoken"]) if q else None) or ""
                     print("voice answer from a phone:", "understood" if option else "not understood", flush=True)  # never the words
                     if not option:
                         return self._json(422, {"error": "no match"})
+                asked = room.questions.get(int(data.get("qid", 0)))
+                before = list(asked["answers"]) if asked else []
                 try:
                     preset, option = room.answer(data.get("vid", ""), int(data.get("qid", 0)), option)
                 except (live.LiveError, ValueError) as e:
                     return self._json(409, {"error": str(e)})
-                _post(data["vid"], ME, compose_answer(preset, option), auto=2)
+                _post(data["vid"], ME, compose_answer(preset, option), auto=2,
+                      tag=option if preset == "ASK_ACCIDENT" and option != "unknown" else "")
                 _report(preset, option, data["vid"])
-                return self._json(200, {"ok": True})
+                # rewards: a small one for answering, a bonus for being first, one for agreeing with another car
+                gained = board.reward_answer(data["vid"], first=not before, ahead=_is_ahead(data["vid"]))
+                same = [v for v, o in before if o == option and option != "unknown"]
+                if same:
+                    board.reward_agree(same + [data["vid"]])
+                    gained += boardmod.REWARD["agree"]
+                return self._json(200, {"ok": True, "gained": gained, "reward": board.me(data["vid"])})
 
             if u.path == "/api/inform":   # the driver tells the road what they see, without being asked
                 kind = data.get("kind")
-                if kind not in live.AHEAD_TEXT:
+                if kind not in live.AHEAD_TEXT and kind not in boardmod.KINDS:
                     return self._json(400, {"error": "unknown report"})
-                reports.add("ahead", kind, ME)
-                return self._json(200, {"ok": True})
+                return self._json(200, {"ok": True, "post": _publish(kind, ME)})
 
-            if u.path == "/api/mood":
-                key = data.get("mood")
-                if key is not None and key not in live.MOODS:
-                    return self._json(400, {"error": "unknown mood"})
-                car_mood["key"], car_mood["at"] = key, time.time()
-                return self._json(200, {"ok": True})
-
-            if u.path == "/api/n/mood":
+            if u.path == "/api/questions/answer":   # the car answers: a quick reply or its confirmed spoken sentence
                 try:
-                    room.set_mood(data.get("vid", ""), data.get("mood"))
-                except live.LiveError as e:
+                    text = inbox_q.answer(int(data.get("qid", 0)), ME, str(data.get("reply", "")))
+                except (qmod.QuestionError, ValueError) as e:
                     return self._json(409, {"error": str(e)})
+                board.award(ME, QUESTION_POINTS)
+                return self._json(200, {"ok": True, "text": text, "items": inbox_q.feed(ME, _who_name),
+                                        "me": board.me(ME)})
+
+            if u.path == "/api/n/ask":   # a phone neighbour asks everyone around
+                vid = data.get("vid", "")
+                if vid not in room.players or room.players[vid].blocked:
+                    return self._json(404, {"error": "unknown neighbour"})
+                try:
+                    qid = inbox_q.ask(vid, str(data.get("text", "")))
+                except qmod.QuestionError as e:
+                    return self._json(422, {"error": str(e)})
+                return self._json(200, {"ok": True, "qid": qid})
+
+            if u.path in ("/api/board/react", "/api/n/react"):   # the car or a phone neighbour taps one of three
+                voter = data.get("vid", ME) if u.path == "/api/n/react" else ME
+                try:
+                    board.react(int(data.get("post", 0)), voter, data.get("what"))
+                except (boardmod.BoardError, ValueError) as e:
+                    return self._json(409, {"error": str(e)})
+                return self._json(200, {"ok": True, **_board_view(voter)})
+
+            if u.path == "/api/n/say":   # a phone neighbour says something short to everyone around
+                vid = data.get("vid", "")
+                if vid not in room.players or room.players[vid].blocked:
+                    return self._json(404, {"error": "unknown neighbour"})
+                try:
+                    road_chat.post(vid, str(data.get("text", "")))
+                except chatmod.ChatError as e:
+                    return self._json(422 if str(e) == "bad text" else 429, {"error": str(e)})
+                return self._json(200, {"ok": True})
+
+            if u.path == "/api/hazard/detected":   # the entrance for a camera pipeline: "I think there is X ahead"
+                try:
+                    pid = hazards.detect(str(data.get("kind", "")), float(data.get("confidence", 1.0)), str(data.get("source", "camera")))
+                except (hzmod.HazardError, ValueError) as e:
+                    return self._json(422, {"error": str(e)})
+                return self._json(200, {"ok": True, "proposal": pid})
+
+            if u.path == "/api/hazard/decline":
+                return self._json(200, {"ok": hazards.decline(int(data.get("proposal_id", 0)))})
+
+            if u.path == "/api/hazard/report":   # one tap: stored with a ticket number, and shown to the neighbours
+                kind = str(data.get("kind", ""))
+                before = len(hazards.mine(ME))
+                try:
+                    key = str(data["key"])[:64] if data.get("key") else None   # the car's id for this report: a retry is not a second report
+                    ticket = hazards.report(kind, ME, proposal_id=data.get("proposal_id"), place=data.get("place"), photo=data.get("photo"),
+                                            key=key, event_at=data.get("event_at"))
+                except hzmod.HazardError as e:
+                    return self._json(422 if str(e) == "unknown hazard" else 429, {"error": str(e)})
+                if len(hazards.mine(ME)) > before:   # a new ticket, not the same report again
+                    board.award(ME, HAZARD_POINTS)
+                    _publish(kind, ME, card=False)
+                return self._json(200, {"ok": True, "ticket": ticket["ticket"], "title": hzmod.KINDS[kind][0],
+                                        "status": ticket["status"], "located": ticket["place"] is not None, "photo": ticket["photo"] is not None, "me": board.me(ME)})
+
+            if u.path == "/api/chat/report":   # the car reports a message: its sender is off the road
+                reason = core.clean_reason(data.get("reason"))
+                if reason is None:
+                    return self._json(422, {"error": "unknown reason"})
+                who = road_chat.sender_of(int(data.get("id", 0)))
+                if not who:
+                    return self._json(404, {"error": "gone"})
+                _ban(who, reason)
                 return self._json(200, {"ok": True})
 
             if u.path == "/api/n/skip":
@@ -411,21 +540,71 @@ class Handler(BaseHTTPRequestHandler):
                 row = db.execute("SELECT from_id FROM messages WHERE id=?", (int(data.get("msg_id", 0)),)).fetchone()
                 if not row or row["from_id"] == "PUBLIC_DATA":
                     return self._json(404, {"error": "nothing to report"})
-                target = row["from_id"]
-                core.report(db, ME, target, str(data.get("reason", "inappropriate"))[:40])  # also blocks
-                reports.remove_by(target)
-                room.block(target)
+                reason = core.clean_reason(data.get("reason"))
+                if reason is None:
+                    return self._json(422, {"error": "unknown reason"})
+                _ban(row["from_id"], reason)
                 return self._json(200, {"ok": True})
 
+            if u.path == "/api/questions/report":   # a strange question: its asker is reported, so blocked
+                reason = core.clean_reason(data.get("reason"))
+                if reason is None:
+                    return self._json(422, {"error": "unknown reason"})
+                who = inbox_q.sender_of(int(data.get("qid", 0)))
+                if not who or who == ME:
+                    return self._json(404, {"error": "gone"})
+                _ban(who, reason)
+                return self._json(200, {"ok": True})
+
+            if u.path == "/api/report_car":   # a car picked on the road: reported with a reason, so blocked
+                reason = core.clean_reason(data.get("reason"))
+                if reason is None:
+                    return self._json(422, {"error": "unknown reason"})
+                target = str(data.get("vid", ""))
+                near = core.nearby(db, ME, radius_m=RADIUS_M) if _fresh(ME, time.time()) else []
+                if target not in {n["id"] for n in near}:
+                    return self._json(404, {"error": "그 차는 이제 근처에 없어요"})
+                _ban(target, reason)
+                return self._json(200, {"ok": True})
+
+            if u.path == "/api/ask":   # a spoken question the driver confirmed: to everyone, or to one picked car
+                to = data.get("to") or None
+                near = core.nearby(db, ME, radius_m=RADIUS_M) if _fresh(ME, time.time()) else []
+                if not near:
+                    return self._json(409, {"error": "주변에 앱을 쓰는 이웃이 없어요"})
+                if to is not None and to not in {n["id"] for n in near}:
+                    return self._json(404, {"error": "그 차는 이제 근처에 없어요"})
+                try:
+                    qid = inbox_q.ask(ME, str(data.get("text", "")), to=to)
+                except qmod.QuestionError as e:
+                    msg = {"bad text": "그 문장은 보낼 수 없어요. 더 짧게 다시 말해 주세요",
+                           "too soon": "같은 차에는 1분 뒤에 다시 물을 수 있어요",
+                           "too many": "잠시 뒤에 다시 물어봐 주세요"}.get(str(e), "보낼 수 없어요")
+                    return self._json(422 if str(e) == "bad text" else 429, {"error": msg})
+                return self._json(200, {"ok": True, "qid": qid})
+
             if u.path == "/api/thanks":
-                row = db.execute("SELECT from_id FROM messages WHERE id=?", (int(data.get("msg_id", 0)),)).fetchone()
-                return self._json(200, {"ok": True, "live": bool(row and room.thank(row["from_id"]))})
+                msg_id = int(data.get("msg_id", 0))
+                row = db.execute("SELECT from_id FROM messages WHERE id=?", (msg_id,)).fetchone()
+                helped = 0
+                if row and row["from_id"].startswith("live-"):   # only a real person earns points
+                    helped = board.reward_helped(ME, row["from_id"], key=msg_id, ahead=_is_ahead(row["from_id"]))
+                return self._json(200, {"ok": True, "live": bool(row and room.thank(row["from_id"])), "points": helped})
 
             if u.path != "/api/send":
                 return self._json(404, {"error": "not found"})
             preset = data.get("preset") or live.match_question(data.get("spoken"))
             if data.get("spoken"):
                 print("voice question from the car:", "understood" if preset in APP_PRESETS else "not understood", flush=True)
+            if preset not in APP_PRESETS and data.get("spoken") and data.get("voice"):
+                # not the question: a short sentence the driver confirmed. It goes to everyone around, as a bubble.
+                try:
+                    road_chat.post(ME, data["spoken"])
+                except chatmod.ChatError as e:
+                    if str(e) == "bad text":
+                        return self._json(422, {"error": "그 문장은 보낼 수 없어요. 더 짧게 다시 말해 주세요"})
+                    return self._json(429, {"error": "잠시 뒤에 다시 말해 주세요"})
+                return self._json(200, {"ok": True, "say": True, "preset": ""})
             if preset not in APP_PRESETS:
                 return self._json(422 if data.get("spoken") else 400, {"error": "unknown preset"})
             # The vehicle decides. When it restricts everything ("restricted"), only a spoken question gets through;
@@ -434,22 +613,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(403, {"error": "차량이 지금은 터치를 제한하고 있어요. 말로 물어보세요"})
             db.execute("UPDATE vehicles SET speed_kmh=?, gear=? WHERE id=?", (0.0, data.get("gear", "D"), ME))
             db.commit()
-            near = core.nearby(db, ME)
+            near = core.nearby(db, ME, radius_m=RADIUS_M) if _fresh(ME, time.time()) else []
             if not near:
-                return self._json(409, {"error": "no neighbours"})
-            to = data.get("to") or None           # None = everyone around, otherwise one car
+                return self._json(409, {"error": "주변에 앱을 쓰는 이웃이 없어요"})
             try:
-                out = core.send(db, ME, to or near[0]["id"], preset, data.get("arg"))
+                out = core.send(db, ME, near[0]["id"], preset, data.get("arg"))
             except core.ChatError as e:
                 return self._json(403, {"error": str(e)})
-            try:
-                qid = room.ask(preset, to=to if to and to.startswith("live-") else None)
-            except live.LiveError:
-                return self._json(429, {"error": "같은 이웃에게는 잠시 후에 다시 물어볼 수 있어요"})
-            if to and to.startswith("live-") and qid is None:
-                return self._json(409, {"error": "이 이웃은 지금 질문을 받을 수 없어요"})
-            _respond_later(preset, data.get("arg"), qid, to if to and not to.startswith("live-") else None)
-            out["waiting_human"] = qid is not None
+            qid = room.ask(preset, only={n["id"] for n in near})   # everyone within range who can answer right now
+            if qid is None:
+                return self._json(409, {"error": "지금 답할 수 있는 이웃이 없어요"})
+            out["waiting_human"] = True
             out["preset"] = preset
             return self._json(200, out)
 

@@ -31,7 +31,6 @@ class LiveRoomTest(unittest.TestCase):
         self.assertEqual(len(r.poll(a)["pending"]), 1)
         self.assertEqual(r.answer(a, qid, "busy"), ("ASK_REST", "busy"))
         seen = r.poll(b)["pending"][0]
-        self.assertEqual(seen["scope"], "all")
         self.assertEqual(seen["answers"], [{"nick": "귀성길곰", "label": "혼잡해요"}])   # b sees what a said
         self.assertEqual(r.poll(a)["pending"], [])                                   # a already answered
         r.answer(b, qid, "normal")
@@ -45,32 +44,6 @@ class LiveRoomTest(unittest.TestCase):
             r.answer(v, qid, "walnut")
         with self.assertRaises(live.LiveError):
             r.answer(vids[3], qid, "udon")
-
-    def test_direct_question_reaches_only_that_car_and_takes_one_answer(self):
-        r, _ = room()
-        a, b = r.join("귀성길", "곰"), r.join("느긋한", "토끼")
-        qid = r.ask("ASK_REST", to=a)
-        self.assertEqual(r.poll(b)["pending"], [])
-        self.assertEqual(r.poll(a)["pending"][0]["scope"], "direct")
-        r.answer(a, qid, "free")
-        self.assertEqual(r.poll(a)["pending"], [])
-
-    def test_direct_question_to_an_unavailable_car_gives_none(self):
-        r, _ = room()
-        a = r.join("귀성길", "곰")
-        r.set_paused(a, True)
-        self.assertIsNone(r.ask("ASK_REST", to=a))
-        self.assertIsNone(r.ask("ASK_REST", to="live-999"))
-
-    def test_same_car_cannot_be_asked_directly_again_right_away(self):
-        r, c = room()
-        a = r.join("귀성길", "곰")
-        r.ask("ASK_REST", to=a)
-        with self.assertRaises(live.LiveError):
-            r.ask("ASK_FOOD", to=a)
-        c.t += live.DIRECT_COOLDOWN + 1
-        r.touch(a)
-        self.assertIsNotNone(r.ask("ASK_FOOD", to=a))
 
     def test_unknown_option_is_rejected(self):
         r, _ = room()
@@ -171,20 +144,21 @@ class BlockAndVoiceTest(unittest.TestCase):
         self.assertIsNone(live.match_answer("ASK_REST", "배가 고프네요"))
 
     def test_spoken_questions_map_to_presets(self):
-        self.assertEqual(live.match_question("다음 휴게소 막혀요?"), "ASK_REST")
-        self.assertEqual(live.match_question("근처에 맛집 있어?"), "ASK_FOOD")
+        self.assertEqual(live.match_question("왜 막혀요?"), "ASK_ACCIDENT")
         self.assertEqual(live.match_question("앞에 무슨 일이야"), "ASK_ACCIDENT")
+        self.assertEqual(live.match_question("왜 이렇게 막히지"), "ASK_ACCIDENT")
         self.assertIsNone(live.match_question("노래 틀어 줘"))
 
-    def test_questions_survive_a_cut_off_or_misheard_phrase(self):
-        # seen in a real test: the recogniser wrote "지금 휴게소 마키나" and, when cut short, "지금 휴게"
-        self.assertEqual(live.match_question("지금 휴게소 마키나"), "ASK_REST")
-        self.assertEqual(live.match_question("지금 휴게"), "ASK_REST")
-        self.assertEqual(live.match_question("지금 막혀?"), "ASK_ACCIDENT")
-        self.assertEqual(live.match_question("지금 휴계소까지 막히나"), "ASK_REST")   # misspelt by the recogniser
-        self.assertIsNone(live.match_question("지금"))
-        self.assertEqual(live.match_question("휴게소 막혀?"), "ASK_REST")   # rest area wins over "막혀"
+    def test_news_is_not_mistaken_for_the_question(self):
+        # these are road messages, not "why is it stuck": they must go out as messages
+        for news in ("앞에 사슴이 죽어 있어요", "5중 추돌사고 났네요", "끼워 줘서 감사합니다", "안녕하세요 대구 가는 중이에요", "지금 막혀요"):
+            self.assertIsNone(live.match_question(news), news)
 
+    def test_a_misheard_question_still_gets_through_but_a_cut_off_news_item_does_not(self):
+        self.assertEqual(live.match_question("왜 막혀"), "ASK_ACCIDENT")
+        self.assertEqual(live.match_question("왜막혀요"), "ASK_ACCIDENT")          # the recogniser drops spaces
+        self.assertIsNone(live.match_question("지금"))
+        self.assertIsNone(live.match_question("다음 휴게소 어때요"))   # the rest-area question was dropped
 
 class ConsentTest(unittest.TestCase):
     def test_skipping_a_question_hides_it_from_that_neighbour_only(self):
@@ -236,35 +210,31 @@ class ProfileTest(unittest.TestCase):
 
 
 class MoodTest(unittest.TestCase):
-    def test_a_mood_shows_for_a_while_and_then_goes(self):
-        r, c = room()
-        v = r.join("귀성길", "곰")
-        r.set_mood(v, "escape")
-        self.assertEqual(r.mood_of(v), "저 탈출할래요!")
-        c.t += live.MOOD_SECONDS + 1
-        self.assertIsNone(r.mood_of(v))
-
-    def test_only_the_fixed_feelings_are_accepted(self):
-        r, _ = room()
-        v = r.join("귀성길", "곰")
-        with self.assertRaises(live.LiveError):
-            r.set_mood(v, "아무 말이나 쓰기")
-        r.set_mood(v, "home")
-        r.set_mood(v, None)
-        self.assertIsNone(r.mood_of(v))
-
-    def test_a_blocked_neighbour_has_no_bubble(self):
-        r, _ = room()
-        v = r.join("귀성길", "곰")
-        r.set_mood(v, "cheer")
-        r.block(v)
-        self.assertIsNone(r.mood_of(v))
-
     def test_clearing_and_nothing_special_are_reports_too(self):
         rep = live.Reports(clock=Clock())
         rep.add("ahead", "clearing", "me")
         self.assertEqual(rep.summary()[0]["title"], "앞쪽 정체가 풀리는 중")
         self.assertEqual(rep.summary()[0]["kind"], "info")
+
+class TextFilterTest(unittest.TestCase):
+    def test_links_phone_numbers_and_long_sentences_are_refused(self):
+        for bad in ("www.example.com 가보세요", "01012345678 로 연락줘요", "가" * 61, "me@mail.net", "   "):
+            self.assertIsNone(live.clean_text(bad), bad)
+        self.assertEqual(live.clean_text("  앞에   사슴이 죽어 있어요 "), "앞에 사슴이 죽어 있어요")
+
+
+class CarProfileTest(unittest.TestCase):
+    def test_a_profile_comes_only_from_the_lists(self):
+        p = live.clean_profile({"adjective": "느긋한", "animal": "곰", "color": live.COLORS[2], "model": "아이오닉 6", "show_model": False})
+        self.assertEqual(p, {"nick": "느긋한곰", "color": live.COLORS[2], "model": "아이오닉 6", "show_model": False})
+
+    def test_anything_typed_is_dropped_or_defaulted(self):
+        p = live.clean_profile({"adjective": "욕설", "animal": "곰", "color": "#000000", "model": "내가 만든 차"})
+        self.assertIsNone(p["nick"])               # not on the lists: the caller keeps the name it already has
+        self.assertEqual(p["color"], live.COLORS[0])
+        self.assertEqual(p["model"], "")
+        self.assertTrue(p["show_model"])           # sharing the model is the default; hiding it is a choice
+        self.assertEqual(live.clean_profile({})["nick"], None)
 
 
 if __name__ == "__main__":

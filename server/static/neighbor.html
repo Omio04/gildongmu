@@ -70,14 +70,21 @@
   .opts { display: grid; gap: 10px; }
   .opts button { padding: 18px 16px; border-radius: 18px; background: var(--accent-soft); color: var(--ink); font-size: 18px; font-weight: 700; text-align: left; border: 1.5px solid transparent; }
   .opts button:active { border-color: var(--accent); }
+  .opts.big { grid-template-columns: 1fr 1fr; }
+  .opts.big button { padding: 22px 8px; text-align: center; font-size: 19px; line-height: 1.25; }
+  .opts.big button b { display: block; font-size: 30px; margin-bottom: 4px; }
+  .opts.big button.span2 { grid-column: 1 / -1; background: var(--bg); color: var(--muted); padding: 16px; }
+  .timer { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; margin: 0 0 12px; }
+  .timer i { display: block; height: 100%; width: 100%; background: var(--accent); transform-origin: left; }
+  .timer i.run { animation: drain 20s linear forwards; }
+  @keyframes drain { to { transform: scaleX(0); } }
+  .confirm { margin-top: 12px; padding: 14px; border-radius: 18px; background: var(--bg); border: 1.5px solid var(--accent); }
+  .confirm p { margin: 6px 0 12px; font-size: 20px; font-weight: 700; }
   .mic { width: 100%; margin-top: 12px; padding: 16px; border-radius: 18px; background: var(--navy); color: #fff; font-size: 17px; font-weight: 700; display: flex; align-items: center; justify-content: center; gap: 10px; }
   .mic svg { width: 22px; height: 22px; fill: #fff; }
   .mic.on { background: var(--accent); animation: blink 1.2s infinite; }
   .ghost { width: 100%; margin-top: 10px; padding: 14px; border-radius: 16px; background: transparent; color: var(--muted); font-size: 16px; font-weight: 700; border: 1.5px solid var(--line); }
   .hint { margin-top: 10px; font-size: 13px; color: var(--muted); text-align: center; line-height: 1.5; }
-  .moods { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-  .moods button { padding: 10px 14px; border-radius: 999px; background: var(--bg); color: var(--ink); font-size: 15px; font-weight: 700; border: 1.5px solid var(--line); }
-  .moods button.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
   .sent { text-align: center; padding: 26px 18px; }
   .sent .ok { width: 54px; height: 54px; margin: 0 auto 12px; border-radius: 16px; background: #e7f8ef; color: var(--green); display: grid; place-items: center; font-size: 30px; }
   .blocked h2 { color: var(--red); }
@@ -117,13 +124,24 @@
     <div class="card me">
       <div class="avatar" id="av">길</div>
       <div><div class="name" id="myName"></div><span class="badge" id="myTitle"></span><br><button class="link" id="edit">프로필 바꾸기</button></div>
-      <div class="stats">도와줌 <b id="helped">0</b><br>고마워요 <b id="thanks">0</b></div>
+      <div class="stats">도와줌 <b id="helped">0</b><br>고마워요 <b id="thanks">0</b><br><b id="pts" style="color:var(--accent)"></b></div>
     </div>
 
-    <div class="card">
-      <h2 style="font-size:17px">지금 내 한마디</h2>
-      <p>고르면 근처 차 화면에 말풍선으로 잠깐 떠요. 다시 누르면 지워져요.</p>
-      <div class="moods" id="moods"></div>
+    <div class="note" id="geo" style="margin:0 4px 10px">위치 확인 중…</div>
+
+    <div class="card say" id="sayCard">
+      <h2 style="font-size:17px">도로에 한마디</h2>
+      <p>짧게 말하면 근처 모든 차에 말풍선으로 떠요. 보내기 전에 확인해요.</p>
+      <button class="mic" id="sayMic" hidden>
+        <svg viewBox="0 0 24 24"><path d="M12,14c1.66,0 3,-1.34 3,-3V5c0,-1.66 -1.34,-3 -3,-3S9,3.34 9,5v6c0,1.66 1.34,3 3,3zM17.3,11c0,3 -2.54,5.1 -5.3,5.1S6.7,14 6.7,11H5c0,3.41 2.72,6.23 6,6.72V21h2v-3.28c3.28,-0.48 6,-3.3 6,-6.72h-1.7z"/></svg>
+        <span id="sayLabel">말하기</span>
+      </button>
+      <div class="confirm" id="sayConfirm" hidden>
+        <small>이렇게 들었어요. 맞으면 보내세요</small>
+        <p id="sayHeard"></p>
+        <div class="opts"><button id="saySend">모두에게 보내기</button><button id="sayAgain">다시 말하기</button></div>
+      </div>
+      <div class="hint" id="sayHint" hidden></div>
     </div>
 
     <div class="card wait" id="wait">
@@ -136,6 +154,7 @@
     <div class="card q" id="question" hidden>
       <small id="qScope">근처 차량이 물어봐요</small>
       <h2 id="qText"></h2>
+      <div class="timer"><i id="timerBar"></i></div>
       <div class="others" id="others" hidden></div>
       <div class="opts" id="opts"></div>
       <button class="mic" id="mic" hidden>
@@ -154,7 +173,7 @@
     <div class="card sent" id="sent" hidden>
       <div class="ok">✓</div>
       <h2>답을 보냈어요</h2>
-      <p>도움이 되었다면 고마워요가 올 거예요.</p>
+      <p>물어본 분이 "도움이 됐어요"를 누르면 점수가 올라요.</p>
     </div>
   </section>
 
@@ -165,6 +184,11 @@
 <script>
 (function () {
   var $ = function (id) { return document.getElementById(id); };
+  var ICON = { accident: '🚨', work: '🚧', debris: '⚠️', breakdown: '🚗', merge: '🔀', crowd: '🚙' }, autoSkip = null;
+  function beep() {
+    try { var C = window.AudioContext || window.webkitAudioContext, c = new C(), o = c.createOscillator(), g = c.createGain();
+      o.frequency.value = 880; g.gain.value = 0.06; o.connect(g); g.connect(c.destination); o.start(); o.stop(c.currentTime + 0.18); } catch (e) {}
+  }
   var vid = null, timer = null, current = null, sentTimer = null, paused = false, opts = null;
   var profile = { adjective: '귀성길', animal: '곰', dest: '대구', color: '#00AAD2', show_model: true, show_dest: true, show_title: true };
 
@@ -194,7 +218,7 @@
     Array.prototype.forEach.call($('sw').children, function (b) { b.classList.toggle('on', b.dataset.c === profile.color); });
   }
   function buildForm(o) {
-    opts = o; if (o.moods) buildMoods(o.moods);
+    opts = o;
     var saved = JSON.parse(localStorage.getItem('gdm2') || 'null');
     if (saved) profile = Object.assign(profile, saved);
     fill($('adj'), o.adjectives, profile.adjective); fill($('ani'), o.animals, profile.animal); fill($('dest'), o.destinations, profile.dest);
@@ -208,31 +232,13 @@
     preview();
   }
 
-  // ---------------- "한마디": one tap, from a fixed list
-  var curMood = null;
-  function buildMoods(list) {
-    $('moods').innerHTML = '';
-    list.forEach(function (m) {
-      var b = document.createElement('button'); b.textContent = m.text;
-      b.onclick = function () {
-        var next = curMood === m.id ? null : m.id;
-        api('POST', '/api/n/mood', { vid: vid, mood: next }).then(function () {
-          curMood = next;
-          Array.prototype.forEach.call($('moods').children, function (x) { x.classList.remove('on'); });
-          if (next) b.classList.add('on');
-          toast(next ? '말풍선을 띄웠어요' : '말풍선을 지웠어요');
-        });
-      };
-      $('moods').appendChild(b);
-    });
-  }
-
   // ---------------- polling
   function render(d) {
     $('myName').textContent = d.me.nick;
     $('av').textContent = d.me.nick.charAt(0); $('av').style.background = d.me.color || '#00aad2';
     $('myTitle').textContent = d.me.title;
     $('helped').textContent = d.me.helped; $('thanks').textContent = d.me.thanks;
+    if (d.reward) $('pts').textContent = d.reward.points + '점 · ' + d.reward.grade;
     if (d.thanks_new > 0) { toast('고마워요를 받았어요 · 도움이 됐어요'); }
     if (d.blocked) { show('blocked'); return; }
     paused = !!d.paused;
@@ -240,7 +246,7 @@
     document.querySelector('#wait h2').textContent = paused ? '쉬는 중이에요' : '근처 차량을 기다리는 중';
     if (d.pending.length) {
       var q = d.pending[0];
-      $('qScope').textContent = q.scope === 'direct' ? '나에게만 온 질문' : '근처 모두에게 온 질문';
+      $('qScope').textContent = '근처 모두에게 온 질문';
       if (q.answers.length) {   // everyone sees what the others already said
         $('others').hidden = false;
         $('others').innerHTML = '먼저 답한 이웃<br>' + q.answers.map(function (a) { return '<b>' + esc(a.nick) + '</b> · ' + esc(a.label); }).join('<br>');
@@ -249,10 +255,19 @@
         current = q;
         $('qText').textContent = q.text;
         $('opts').innerHTML = '';
+        $('opts').className = q.options.length > 4 ? 'opts big' : 'opts';
         q.options.forEach(function (o) {
-          var b = document.createElement('button'); b.textContent = o.label; b.onclick = function () { answer(q.qid, { option: o.id }); }; $('opts').appendChild(b);
+          var b = document.createElement('button');
+          if (q.options.length > 4) { b.innerHTML = '<b>' + (ICON[o.id] || '') + '</b>' + esc(o.label); if (o.id === 'unknown') b.className = 'span2'; }
+          else b.textContent = o.label; b.onclick = function () { answer(q.qid, { option: o.id }); }; $('opts').appendChild(b);
         });
-        if (navigator.vibrate) navigator.vibrate(120);
+        if (navigator.vibrate) navigator.vibrate([120, 60, 120]);
+        beep();
+        var bar = $('timerBar'); bar.className = ''; void bar.offsetWidth; bar.className = 'run';   // restart the 20 s countdown
+        clearTimeout(autoSkip);
+        autoSkip = setTimeout(function () {   // not answered in time: it moves on by itself, nothing is lost
+          if (current && current.qid === q.qid) { api('POST', '/api/n/skip', { vid: vid, qid: q.qid }); current = null; show('wait'); }
+        }, 20000);
       }
       clearTimeout(sentTimer); show('question');
     } else if ($('sent').hidden) { current = null; show('wait'); }
@@ -260,8 +275,10 @@
 
   function done() { current = null; show('sent'); clearTimeout(sentTimer); sentTimer = setTimeout(function () { show('wait'); }, 3500); }
   function answer(qid, extra) {
+    clearTimeout(autoSkip);
     api('POST', '/api/n/answer', Object.assign({ vid: vid, qid: qid }, extra)).then(function (r) {
       if (r.status === 422) { toast('잘 못 알아들었어요. 버튼으로 눌러 주세요'); return; }
+      if (r.status === 409 && r.json && r.json.error === 'unknown option') { toast('그 문장은 보낼 수 없어요. 짧게 다시 말하거나 버튼을 눌러 주세요'); return; }
       if (!r.ok) { toast('이미 다른 이웃들이 답했어요'); }
       done();
     });
@@ -272,11 +289,29 @@
       setConn(true); render(r.json);
     }).catch(function () { setConn(false); });
   }
+  // ---------------- where I am: the car measures the distance from this, so it has to be real (GPS needs https)
+  var lastPos = null, geoId = null, geoTimer = null;
+  function sendPos() {
+    if (!lastPos || !vid) return;
+    api('POST', '/api/n/pos', { vid: vid, lat: lastPos.latitude, lon: lastPos.longitude, heading: lastPos.heading || 0 });
+  }
+  function startGeo() {
+    var g = $('geo');
+    if (!navigator.geolocation) { g.textContent = '이 기기는 위치를 알 수 없어요. 근처 차에 보이지 않아요'; return; }
+    if (geoId !== null) return;
+    geoId = navigator.geolocation.watchPosition(function (p) {
+      lastPos = p.coords; sendPos(); g.textContent = '내 위치를 근처 차에 알리는 중 (정확도 약 ' + Math.round(p.coords.accuracy) + 'm)';
+    }, function (e) {
+      g.textContent = (e.code === 1 ? '위치 권한을 허용해야' : '위치를 받을 수 없어서') + ' 근처 차에 보여요. https 주소로 열었는지도 확인해 주세요';
+    }, { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 });
+    geoTimer = setInterval(sendPos, 10000);   // keep the position fresh while standing still
+  }
+
   function join() {
     readForm();
     localStorage.setItem('gdm2', JSON.stringify(profile));
     api('POST', '/api/n/join', profile).then(function (r) {
-      vid = r.json.vid; $('profile').hidden = true; $('main').hidden = false; show('wait');
+      vid = r.json.vid; $('profile').hidden = true; $('main').hidden = false; show('wait'); startGeo(); sendPos();
       clearInterval(timer); tick(); timer = setInterval(tick, 1500);
     });
   }
@@ -294,8 +329,9 @@
   var listening = false;
   function setupMic() {
     var hint = $('micHint');
-    if (Rec && window.isSecureContext) { $('mic').hidden = false; hint.hidden = true; }
-    else if (Rec) { hint.hidden = false; hint.textContent = '말로 답하려면 보안 주소(https)로 접속하세요. ' + location.hostname + ':8443/neighbor'; }
+    if (Rec && window.isSecureContext) { $('mic').hidden = false; hint.hidden = true; $('sayMic').hidden = false; }
+    else if (Rec) { hint.hidden = false; hint.textContent = '말로 답하려면 보안 주소(https)로 접속하세요. ' + location.hostname + ':8443/neighbor';
+      $('sayHint').hidden = false; $('sayHint').textContent = '말하려면 보안 주소(https)로 접속하세요. ' + location.hostname + ':8443/neighbor'; }
   }
   $('mic').onclick = function () {
     if (listening || !current) return;
@@ -307,6 +343,30 @@
     rec.onerror = function () { toast('음성 인식을 쓸 수 없어요. 버튼으로 눌러 주세요'); stop(); };
     rec.onend = stop;
     rec.start();
+  };
+  // ---------------- a short message to everyone around: said out loud, confirmed here, then sent
+  var sayText = '';
+  function listenSay() {
+    if (!Rec || !window.isSecureContext) { toast('말하려면 보안 주소(https)로 접속하세요'); return; }
+    var rec = new Rec();
+    rec.lang = 'ko-KR'; rec.interimResults = false; rec.maxAlternatives = 1;
+    $('sayMic').classList.add('on'); $('sayLabel').textContent = '듣고 있어요…';
+    var stop = function () { $('sayMic').classList.remove('on'); $('sayLabel').textContent = '말하기'; };
+    rec.onresult = function (e) { sayText = e.results[0][0].transcript; $('sayHeard').textContent = '“' + sayText + '”'; $('sayConfirm').hidden = false; };
+    rec.onerror = function () { toast('음성 인식을 쓸 수 없어요'); stop(); };
+    rec.onend = stop;
+    rec.start();
+  }
+  $('sayMic').onclick = listenSay;
+  $('sayAgain').onclick = function () { $('sayConfirm').hidden = true; listenSay(); };
+  $('saySend').onclick = function () {
+    if (!sayText) return;
+    var text = sayText; sayText = ''; $('sayConfirm').hidden = true;
+    api('POST', '/api/n/say', { vid: vid, text: text }).then(function (r) {
+      if (r.status === 422) toast('그 문장은 보낼 수 없어요. 더 짧게 다시 말해 주세요');
+      else if (r.status === 429) toast('잠시 뒤에 다시 말해 주세요');
+      else toast('도로에 전했어요');
+    });
   };
   $('skip').onclick = function () {
     if (!current) return;

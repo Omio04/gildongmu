@@ -9,31 +9,21 @@ import time
 
 NICKS = ["귀성길곰", "느긋한토끼", "졸린사자", "달리는펭귄", "고향행여우", "휴게소요정", "나들이고래", "든든한다람쥐"]
 
-# "도로 위 한마디": a fixed set of feelings, shown as a bubble over a car for a while
-MOODS = {
-    "home": "집 가고 싶어요…",
-    "escape": "저 탈출할래요!",
-    "sleepy": "저만 졸린 거 아니죠?",
-    "cheer": "조금만 버텨요!",
-    "hungry": "배고파요…",
-    "accident": "앞에 사고 났나 봐요!",
-}
-MOOD_SECONDS = 90
-
 # A profile is built only from these lists: nothing a driver types ever reaches another driver.
 ADJECTIVES = ["귀성길", "느긋한", "졸린", "달리는", "든든한", "신나는", "조용한", "반가운", "씩씩한", "여유로운", "부지런한", "포근한"]
 ANIMALS = ["곰", "토끼", "사자", "펭귄", "여우", "고래", "다람쥐", "수달", "고양이", "강아지", "오리", "거북이"]
 COLORS = ["#00AAD2", "#12B76A", "#F5A524", "#E5446D", "#7A5AF8", "#2E90FA"]
 DESTINATIONS = ["서울", "인천", "수원", "대전", "청주", "전주", "광주", "대구", "부산", "울산", "강릉", "춘천", "목포", "여수", "포항", "제주"]
+MODELS = ["캐스퍼", "아반떼", "쏘나타", "그랜저", "코나", "투싼", "싼타페", "팰리세이드", "스타리아",
+          "아이오닉 5", "아이오닉 6", "아이오닉 9"]   # the Hyundai models a driver can say they drive (a list, so never typed)
 ACTIVE_SECONDS = 10     # a phone that polled within this window counts as "in the next car"
 QUESTION_SECONDS = 45   # how long a question stays on the phones
 MAX_ANSWERS = 3         # a question to everyone closes after this many answers
-DIRECT_COOLDOWN = 60    # seconds before the same car can be asked directly again (no harassment)
 
 QUESTION_TEXT = {
     "ASK_REST": "다음 휴게소 혼잡한가요?",
     "ASK_FOOD": "근처 맛집 있나요?",
-    "ASK_ACCIDENT": "앞에 무슨 일 있나요?",
+    "ASK_ACCIDENT": "왜 막히는지 아세요?",   # the core question: why is the road stuck
     "HELLO": "인사를 건넸어요",
 }
 
@@ -41,10 +31,39 @@ QUESTION_TEXT = {
 OPTIONS = {
     "ASK_REST": [("free", "한산해요"), ("normal", "보통이에요"), ("busy", "혼잡해요"), ("unknown", "잘 모르겠어요")],
     "ASK_FOOD": [("walnut", "호두과자 맛집이 좋아요"), ("udon", "휴게소 우동이 괜찮아요"), ("unknown", "잘 모르겠어요")],
-    "ASK_ACCIDENT": [("accident", "사고 처리 중이에요"), ("work", "공사 중이에요"),
-                     ("jam", "그냥 정체예요, 곧 풀려요"), ("unknown", "잘 모르겠어요")],
+    # the cause, as big one-tap choices: the answers are data, so they can be counted, trusted and rewarded
+    "ASK_ACCIDENT": [("accident", "사고"), ("work", "공사"), ("debris", "낙하물"), ("breakdown", "고장 난 차"),
+                     ("merge", "합류·차선 줄어듦"), ("crowd", "그냥 차가 많아요"), ("unknown", "모르겠어요")],
     "HELLO": [("hi", "반가워요!"), ("same", "저도 같은 방향이에요")],
 }
+
+def clean_profile(data):
+    """The car's own profile, taken only from the allowed lists (anything else is dropped or defaulted).
+    "nick" is None when no valid adjective + animal pair came, so the caller keeps the name it already has."""
+    adj, ani = data.get("adjective"), data.get("animal")
+    return {
+        "nick": adj + ani if adj in ADJECTIVES and ani in ANIMALS else None,
+        "color": data.get("color") if data.get("color") in COLORS else COLORS[0],
+        "model": data.get("model") if data.get("model") in MODELS else "",
+        "show_model": bool(data.get("show_model", True)),
+    }
+
+
+MAX_TEXT_CHARS = 60   # the longest sentence one driver may put in front of another
+
+
+def clean_text(raw):
+    """A spoken sentence that may reach other drivers: short, one line, no link, no phone number. Else None."""
+    s = " ".join((raw or "").split())
+    if not s or len(s) > MAX_TEXT_CHARS:
+        return None
+    low = s.lower()
+    if any(w in low for w in ("http", "www.", ".com", ".kr", "@")):
+        return None
+    if len([c for c in s if c.isdigit()]) >= 7:
+        return None
+    return s
+
 
 # (helped answers needed, title)
 TITLES = [(0, "길동무 새싹"), (3, "길 안내 단골"), (10, "도로 위 박사")]
@@ -75,7 +94,6 @@ class Player:
         self.thanks_unseen = 0   # shown once on the phone as a toast
         self.blocked = False     # reported by a driver: no more questions, and the answers no longer count
         self.paused = False      # "잠시 쉬기": the neighbour chose not to receive questions for now
-        self.mood = None         # (key, when) -- the bubble over this car
 
 
 class LiveRoom:
@@ -84,7 +102,6 @@ class LiveRoom:
         self.lock = threading.RLock()
         self.players = {}
         self.questions = {}
-        self.last_direct = {}   # vid -> when it was last asked directly
         self._seq = 0
 
     def _next(self):
@@ -133,34 +150,22 @@ class LiveRoom:
             return [p for p in self.players.values() if now - p.last_seen <= ACTIVE_SECONDS]
 
     # ---- questions
-    def ask(self, preset, to=None):
-        """The car asked something: to everyone around (to=None) or to one car.
-        Returns a question id, or None when nobody is available to answer."""
+    def ask(self, preset, only=None):
+        """The car asked everyone around ([only]: the ids that are actually within range). Returns a question id,
+        or None when nobody is available to answer."""
         if preset not in OPTIONS:
             raise LiveError("unknown preset")
         with self.lock:
             now = self.clock()
-            available = [p.vid for p in self.active() if not p.blocked and not p.paused]
-            if to is not None:
-                if to not in available:
-                    return None
-                last = self.last_direct.get(to)
-                if last is not None and now - last < DIRECT_COOLDOWN:
-                    raise LiveError("cooldown")
-                self.last_direct[to] = now
-                targets, scope = {to}, "direct"
-            else:
-                if not available:
-                    return None
-                targets, scope = set(available), "all"
+            targets = {p.vid for p in self.active() if not p.blocked and not p.paused and (only is None or p.vid in only)}
+            if not targets:
+                return None
             qid = self._next()
-            self.questions[qid] = {"preset": preset, "created": now, "scope": scope, "targets": targets,
-                                   "answers": []}   # (vid, option)
+            self.questions[qid] = {"preset": preset, "created": now, "targets": targets, "answers": []}   # (vid, option)
             return qid
 
     def _open(self, q):
-        limit = 1 if q["scope"] == "direct" else MAX_ANSWERS
-        return len(q["answers"]) < limit
+        return len(q["answers"]) < MAX_ANSWERS
 
     def is_answered(self, qid):
         q = self.questions.get(qid)
@@ -180,7 +185,7 @@ class LiveRoom:
                     continue
                 labels = dict(OPTIONS[q["preset"]])
                 pending.append({
-                    "qid": qid, "preset": q["preset"], "text": QUESTION_TEXT[q["preset"]], "scope": q["scope"],
+                    "qid": qid, "preset": q["preset"], "text": QUESTION_TEXT[q["preset"]],
                     "options": [{"id": i, "label": l} for i, l in OPTIONS[q["preset"]]],
                     # what the other neighbours already said: everyone sees the whole conversation
                     "answers": [{"nick": self.players[v].nick, "label": labels[o]} for v, o in q["answers"]],
@@ -219,26 +224,6 @@ class LiveRoom:
         with self.lock:
             self.touch(vid).paused = bool(paused)
 
-    def set_mood(self, vid, key):
-        """Pick one of the fixed feelings; None clears it."""
-        with self.lock:
-            p = self.touch(vid)
-            if key is None:
-                p.mood = None
-            elif key in MOODS:
-                p.mood = (key, self.clock())
-            else:
-                raise LiveError("unknown mood")
-
-    def mood_of(self, vid):
-        """The bubble text to show over this car right now, or None."""
-        with self.lock:
-            p = self.players.get(vid)
-            if not p or p.blocked or not p.mood:
-                return None
-            key, when = p.mood
-            return MOODS[key] if self.clock() - when <= MOOD_SECONDS else None
-
     def block(self, vid):
         """A driver reported this neighbour."""
         with self.lock:
@@ -262,7 +247,11 @@ class LiveRoom:
 
 REPORT_SECONDS = 15 * 60   # a report is stale after this long
 AHEAD_TEXT = {"accident": "앞쪽 사고 처리 중", "work": "앞쪽 공사 중", "jam": "단순 정체, 곧 풀릴 가능성",
-              "clearing": "앞쪽 정체가 풀리는 중", "ok": "앞쪽 특이사항 없음"}
+              "clearing": "앞쪽 정체가 풀리는 중", "ok": "앞쪽 특이사항 없음",
+              "debris": "도로에 낙하물이 있어요", "breakdown": "고장 난 차가 서 있어요",
+              "merge": "합류 구간이라 막혀요", "crowd": "차가 많아서 막혀요"}
+CAUSE_SHORT = {"accident": "사고", "work": "공사", "debris": "낙하물", "breakdown": "고장 차",
+               "merge": "합류", "crowd": "차 많음"}   # what a car shows on the road after it answered
 REST_TEXT = {"free": "한산해요", "normal": "보통이에요", "busy": "혼잡해요"}
 FOOD_TEXT = {"walnut": "호두과자 맛집이 좋대요", "udon": "휴게소 우동이 괜찮대요"}
 
@@ -335,15 +324,16 @@ ANSWER_WORDS = {
                  "busy": ["혼잡", "붐", "복잡", "사람 많", "꽉", "만차"], "unknown": ["모르"]},
     "ASK_FOOD": {"walnut": ["호두", "과자"], "udon": ["우동", "국수", "라면"], "unknown": ["모르"]},
     "ASK_ACCIDENT": {"accident": ["사고", "접촉", "추돌"], "work": ["공사", "작업"],
-                     "jam": ["정체", "막혀", "차 많", "그냥", "곧 풀"], "unknown": ["모르"]},
+                     "debris": ["낙하", "떨어", "물건"], "breakdown": ["고장", "서 있", "멈춰"],
+                     "merge": ["합류", "차선", "병목"], "unknown": ["모르"],
+                     "crowd": ["정체", "막혀", "차 많", "많아", "그냥", "곧 풀"]},
     "HELLO": {"hi": ["안녕", "반가"], "same": ["같은", "같이", "저도"]},
 }
 
-QUESTION_WORDS = {   # order matters: a question that names the rest area is about the rest area
-    "ASK_REST": ["휴게", "휴계", "휴개", "쉼터"],   # the recogniser sometimes writes 휴계소
-    "ASK_FOOD": ["맛집", "식당", "맛있", "먹", "음식", "밥", "배고"],
-    "ASK_ACCIDENT": ["사고", "무슨 일", "왜 막", "앞에", "정체", "막혀", "막히", "마키"],
-    "HELLO": ["안녕", "인사"],
+QUESTION_WORDS = {
+    # Only the one question the app asks. Anything else said out loud is a road message, so these words must be
+    # clear: "앞에", "사고", "막혀" alone ("앞에 사슴이 있어요", "5중 추돌사고 났네요") are news, not a question.
+    "ASK_ACCIDENT": ["왜 막", "왜 이렇게", "왜 이리", "무슨 일", "막히는 이유", "이유가", "원인"],
 }
 
 
