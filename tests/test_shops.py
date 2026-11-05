@@ -6,6 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "server"))
 import shops as sh
 
+TOK = "tok_abcdef12"   # what the payment provider returns after a card is registered
 HERE = (37.41272, 127.09468)   # the emulator's start position the sample shops are placed around
 
 
@@ -70,28 +71,91 @@ class ShopsTest(unittest.TestCase):
     def test_an_order_takes_the_price_from_the_shop_and_the_same_tap_is_one_order(self):
         s = fresh()
         x = s.near(*HERE)["shops"][0]
-        a = s.order(x["id"], x["menu"][0]["name"], "me", *HERE, key="k1")
-        b = s.order(x["id"], x["menu"][0]["name"], "me", *HERE, key="k1")
+        a = s.order(x["id"], x["menu"][0]["name"], "me", *HERE, key="k1", payment_token=TOK)
+        b = s.order(x["id"], x["menu"][0]["name"], "me", *HERE, key="k1", payment_token=TOK)
         self.assertEqual(a, b)
         self.assertEqual(a["price"], x["menu"][0]["price"])
         self.assertTrue(a["receipt"].startswith("D-"))
         self.assertEqual(len(s.orders_for(x["id"])), 1)   # what the shop would see: one order
 
+    def test_an_order_without_a_registered_payment_method_is_refused(self):
+        s = fresh()
+        x = s.near(*HERE)["shops"][0]
+        for bad in (None, "", "1234-5678-9012-3456", "tok_x"):   # no token, or something that looks like a card number
+            with self.assertRaises(sh.ShopError):
+                s.order(x["id"], x["menu"][0]["name"], "me", *HERE, payment_token=bad)
+        self.assertEqual(s.orders_for(x["id"]), [])
+
     def test_an_order_for_an_unknown_item_or_a_far_shop_is_refused(self):
         s = fresh()
         x = s.near(*HERE)["shops"][0]
         with self.assertRaises(sh.ShopError):
-            s.order(x["id"], "없는 메뉴", "me", *HERE)
+            s.order(x["id"], "없는 메뉴", "me", *HERE, payment_token=TOK)
         with self.assertRaises(sh.ShopError):
-            s.order("nope", "x", "me", *HERE)
+            s.order("nope", "x", "me", *HERE, payment_token=TOK)
         with self.assertRaises(sh.ShopError):
-            s.order(x["id"], x["menu"][0]["name"], "me", HERE[0] + 0.5, HERE[1])   # the car is 55 km away
+            s.order(x["id"], x["menu"][0]["name"], "me", HERE[0] + 0.5, HERE[1], payment_token=TOK)   # the car is 55 km away
+
+    def _placed(self, s):
+        x = s.near(*HERE)["shops"][0]
+        return x, s.order(x["id"], x["menu"][0]["name"], "me", *HERE, payment_token=TOK)
+
+    def test_the_shop_moves_an_order_through_its_life_and_the_car_sees_it(self):
+        s = fresh()
+        x, o = self._placed(s)
+        self.assertEqual((o["status"], o["status_label"]), ("placed", "접수됨"))
+        self.assertEqual(o["shop_can"], ["accepted", "cancelled"])
+        for status in ("accepted", "cooking", "ready", "picked_up"):
+            self.assertEqual(s.set_status(o["receipt"], status)["status"], status)
+        self.assertEqual(s.track(o["receipt"])["status_label"], "수령 완료")
+        self.assertEqual(s.orders_for(x["id"])[0]["status"], "picked_up")
+
+    def test_a_status_cannot_skip_a_step_or_go_back(self):
+        s = fresh()
+        _, o = self._placed(s)
+        with self.assertRaises(sh.ShopError):
+            s.set_status(o["receipt"], "ready")   # cooking first
+        s.set_status(o["receipt"], "accepted")
+        with self.assertRaises(sh.ShopError):
+            s.set_status(o["receipt"], "placed")
+        with self.assertRaises(sh.ShopError):
+            s.set_status("D-0", "accepted")   # unknown order
+
+    def test_the_car_may_cancel_until_the_shop_starts_cooking(self):
+        s = fresh()
+        _, o = self._placed(s)
+        self.assertTrue(o["car_can_cancel"])
+        self.assertEqual(s.cancel(o["receipt"])["status"], "cancelled")
+        _, o2 = self._placed(s)
+        s.set_status(o2["receipt"], "accepted")
+        s.set_status(o2["receipt"], "cooking")
+        self.assertFalse(s.track(o2["receipt"])["car_can_cancel"])
+        with self.assertRaises(sh.ShopError):
+            s.cancel(o2["receipt"])
+
+    def test_stuck_in_a_jam_the_arrival_moves_later_and_the_shop_sees_the_delay(self):
+        s = fresh()
+        x, o = self._placed(s)   # placed from the start position: the shop is about 2 km away
+        far = s.track(o["receipt"], HERE[0] - 0.02, HERE[1])   # the car went the other way: about 2 km further
+        self.assertGreater(far["eta_min"], o["eta_min"])
+        self.assertEqual(far["delay_min"], far["eta_min"] - o["eta_min"])
+        self.assertGreaterEqual(far["cook_in_min"], o["cook_in_min"])   # cooking is started later, not earlier
+        self.assertEqual(s.orders_for(x["id"])[0]["delay_min"], far["delay_min"])
+
+    def test_a_finished_order_no_longer_moves_with_the_car(self):
+        s = fresh()
+        _, o = self._placed(s)
+        for status in ("accepted", "cooking", "ready"):
+            s.set_status(o["receipt"], status)
+        s.set_status(o["receipt"], "picked_up")
+        done = s.track(o["receipt"], HERE[0] + 0.5, HERE[1])
+        self.assertEqual(done["eta_min"], o["eta_min"])
 
     def test_orders_and_shops_survive_a_restart(self):
         with tempfile.TemporaryDirectory() as d:
             s = sh.Shops(store=d)
             x = s.near(*HERE)["shops"][0]
-            s.order(x["id"], x["menu"][0]["name"], "me", *HERE, key="k")
+            s.order(x["id"], x["menu"][0]["name"], "me", *HERE, key="k", payment_token=TOK)
             s.close()
             s2 = sh.Shops(store=d)
             self.assertEqual(len(s2.near(*HERE)["shops"]), 5)   # not seeded twice

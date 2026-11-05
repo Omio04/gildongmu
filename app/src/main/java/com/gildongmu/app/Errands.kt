@@ -24,7 +24,13 @@ data class ShopsView(val rangeKm: Double, val shops: List<Shop>, val nearestName
 /** One offer: a shop and the single item that answers the driver's request. */
 data class Pick(val shop: Shop, val item: MenuItem)
 
-data class OrderReceipt(val receipt: String, val shop: String, val item: String, val price: Int, val etaMin: Int, val cookInMin: Int, val status: String)
+/** An order as the server knows it: where it is in its life (status), the live arrival time and how much later than first said. */
+data class OrderReceipt(
+    val receipt: String, val shop: String, val item: String, val price: Int, val etaMin: Int, val cookInMin: Int, val status: String,
+    val statusLabel: String = "", val delayMin: Int = 0, val carCanCancel: Boolean = false, val payment: String = "", val phone: String = "",
+) {
+    val finished get() = status == "picked_up" || status == "cancelled"
+}
 
 object Errands {
     val ITEM_KINDS = listOf("음료", "식사", "간식")
@@ -74,6 +80,16 @@ object Errands {
     fun spoken(p: Pick): String =
         "가장 가까운 곳은 ${p.shop.place} ${p.shop.name}, ${"%.1f".format(p.shop.km)}킬로. ${p.item.name} ${p.item.priceText()}. " +
             "${p.shop.etaMin}분 뒤 도착이라 맞춰 준비해요. 결제, 메뉴, 다른 곳, 단골, 취소 중에 말해 주세요"
+
+    /** A menu item the driver named ("아이스 라떼로"): matched by its first letters, or the whole name. */
+    fun itemNamed(shop: Shop, spoken: String): MenuItem? {
+        val w = spoken.replace(" ", "")
+        return shop.menu.firstOrNull { m -> m.name.replace(" ", "").let { n -> w.contains(n.take(3)) || (w.length >= 2 && n.contains(w)) } }
+    }
+
+    /** What is said about an order in progress. */
+    fun statusSpoken(o: OrderReceipt): String =
+        "${o.shop}에 주문한 ${o.item}은 ${o.statusLabel}." + if (!o.finished) " 도착은 ${o.etaMin}분 뒤예요." + (if (o.delayMin > 0) " 막혀서 처음보다 ${o.delayMin}분 늦어졌어요." else "") else ""
 
     fun menuSpoken(s: Shop): String = "${s.name} 메뉴는 " + s.menu.joinToString(", ") { "${it.name} ${it.priceText()}" } + ". 결제할까요?"
 }

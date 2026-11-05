@@ -19,6 +19,10 @@
   .order { display:flex; justify-content:space-between; gap:12px; align-items:center; }
   .order b { font-size:20px; }
   .cook { color:var(--ok); font-weight:700; }
+  .state { font-weight:700; padding:3px 10px; border-radius:999px; background:var(--line); }
+  .s-placed { background:#fff3d6; color:#8a5a00; } .s-accepted, .s-cooking { background:#dff1fb; color:#0b5f85; } .s-ready, .s-picked_up { background:#dff5e8; color:#0b6b3d; } .s-cancelled { background:#f3d6d6; color:#8a1f1f; }
+  .late { color:#c2410c; font-weight:700; }
+  button.ghost { background:var(--card); color:var(--ink); border:1px solid var(--line); }
   .empty { color:var(--muted); text-align:center; padding:28px 0; }
   .note { color:var(--muted); font-size:14px; }
   label { display:block; margin:10px 0 4px; font-weight:600; }
@@ -75,15 +79,32 @@ async function loadShops() {
   $('info').textContent = s ? `☎ ${s.phone} · 준비 ${s.wait_min}분 · 메뉴 ${s.menu.map(m => m.name + ' ' + m.price.toLocaleString() + '원').join(', ')}` : '';
 }
 
+const BTN = { accepted: '수락', cooking: '조리 시작', ready: '준비 완료', picked_up: '수령 완료', cancelled: '거절' };
+
+async function setStatus(receipt, status) {
+  await fetch('/api/shops/order/status', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ receipt, status }) });
+  loadOrders();
+}
+
 async function loadOrders() {
   if (!current) { $('orders').innerHTML = '<div class="card empty">등록된 가게가 없어요</div>'; return; }
   const r = await fetch('/api/shops/orders?shop_id=' + encodeURIComponent(current));
   const d = await r.json();
-  $('orders').innerHTML = d.items.length ? d.items.map(o => `
-    <div class="card order">
-      <div><b>${o.item}</b><br><span class="note">${o.receipt} · ${o.price.toLocaleString()}원 · ${o.status}</span></div>
-      <div style="text-align:right"><span class="cook">${o.cook_in_min > 0 ? o.cook_in_min + '분 뒤 조리 시작' : '바로 조리 시작'}</span><br><span class="note">차가 ${o.eta_min}분 뒤 도착</span></div>
-    </div>`).join('') : '<div class="card empty">아직 들어온 주문이 없어요</div>';
+  $('orders').innerHTML = d.items.length ? d.items.map(o => {
+    const late = o.delay_min > 0 ? `<span class="late">차가 막혀서 ${o.delay_min}분 늦어요</span>` : '';
+    const live = ['placed', 'accepted', 'cooking'].includes(o.status);
+    const cook = !live ? '' : (o.start_cooking_now ? '<span class="cook">지금 조리를 시작하세요</span>' : `<span class="cook">${o.cook_in_min}분 뒤 조리 시작</span>`);
+    const btns = o.shop_can.map(st => `<button class="${st === 'cancelled' ? 'ghost' : ''}" onclick="setStatus('${o.receipt}','${st}')">${BTN[st]}</button>`).join(' ');
+    return `
+    <div class="card">
+      <div class="order">
+        <div><b>${o.item}</b><br><span class="note">${o.receipt} · ${o.price.toLocaleString()}원 · ${o.payment}</span></div>
+        <div style="text-align:right"><span class="state s-${o.status}">${o.status_label}</span><br><span class="note">${live ? '차가 ' + o.eta_min + '분 뒤 도착' : ''}</span></div>
+      </div>
+      <p>${cook} ${late}</p>
+      <div>${btns}</div>
+    </div>`;
+  }).join('') : '<div class="card empty">아직 들어온 주문이 없어요</div>';
 }
 
 $('shop').addEventListener('change', () => { current = $('shop').value; loadShops(); loadOrders(); });

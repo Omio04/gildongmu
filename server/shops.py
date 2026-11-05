@@ -35,6 +35,19 @@ CREATE TABLE IF NOT EXISTS orders (
   cook_in_min INTEGER NOT NULL, created_at REAL NOT NULL, status TEXT NOT NULL);
 """
 
+# columns added later: an older shops.db is upgraded in place
+ORDER_COLUMNS = [("first_eta", "INTEGER"), ("car_lat", "REAL"), ("car_lon", "REAL"), ("updated_at", "REAL"), ("payment", "TEXT")]
+
+# an order's life: the shop moves it forward, the car may cancel while the shop has not started cooking
+STATUS_LABEL = {"placed": "접수됨", "accepted": "가게가 수락했어요", "cooking": "조리 중", "ready": "준비 완료",
+                "picked_up": "수령 완료", "cancelled": "취소됨"}
+SHOP_NEXT = {"placed": ("accepted", "cancelled"), "accepted": ("cooking", "cancelled"), "cooking": ("ready",), "ready": ("picked_up",)}
+CAR_CAN_CANCEL = ("placed", "accepted")
+LIVE = ("placed", "accepted", "cooking")   # while the car is still on its way: its position keeps updating the arrival time
+PAYMENT = "모의 결제(등록 카드 ****1234)"
+_TOKEN = re.compile(r"^tok_[a-z0-9]{8,40}$")   # what a payment provider hands back after the card was registered: never the card number
+
+
 # sample shops around the emulator's start position (37.41272, 127.09468): (name, place, north km, east km, wait, phone, menu)
 _ANCHOR = (37.41272, 127.09468)
 _SEED = [
@@ -78,6 +91,10 @@ class Shops:
         if store is not None:
             self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
+        have = {r["name"] for r in self.db.execute("PRAGMA table_info(orders)")}
+        for col, typ in ORDER_COLUMNS:
+            if col not in have:
+                self.db.execute(f"ALTER TABLE orders ADD COLUMN {col} {typ}")
         if seed and not self.db.execute("SELECT 1 FROM shops LIMIT 1").fetchone():
             self._seed()
 
@@ -161,11 +178,13 @@ class Shops:
 
     # ------------------------------------------------------------ an order (the payment is a mock)
 
-    def order(self, shop_id, item, vehicle, lat, lon, key=None):
+    def order(self, shop_id, item, vehicle, lat, lon, key=None, payment_token=None):
         if key:
             old = self.db.execute("SELECT * FROM orders WHERE key=?", (key,)).fetchone()
             if old:   # the same tap again (a slow answer, a retry): the same order
                 return self._order_view(old)
+        if not (isinstance(payment_token, str) and _TOKEN.match(payment_token)):
+            raise ShopError("no payment method")   # a card must be registered first (here: a mock registration in the app)
         r = self.db.execute("SELECT * FROM shops WHERE id=?", (shop_id,)).fetchone()
         if r is None:
             raise ShopError("unknown shop")
@@ -179,19 +198,66 @@ class Shops:
         now = self.clock()
         with self.db:
             cur = self.db.execute(
-                "INSERT INTO orders (receipt, key, shop_id, item, price, vehicle, eta_min, cook_in_min, created_at, status) "
-                "VALUES ('', ?,?,?,?,?,?,?,?,?)",
-                (key, shop_id, m["name"], m["price"], vehicle, eta, max(0, eta - r["wait_min"]), now, "접수(모의 결제)"))
+                "INSERT INTO orders (receipt, key, shop_id, item, price, vehicle, eta_min, cook_in_min, created_at, status,"
+                " first_eta, car_lat, car_lon, updated_at, payment) VALUES ('', ?,?,?,?,?,?,?,?,'placed',?,?,?,?,?)",
+                (key, shop_id, m["name"], m["price"], vehicle, eta, max(0, eta - r["wait_min"]), now, eta, lat, lon, now,
+                 f"모의 결제 · 결제 토큰 {payment_token[:8]}…"))
             self.db.execute("UPDATE orders SET receipt=? WHERE id=?", (f"D-{1000 + cur.lastrowid}", cur.lastrowid))
         return self._order_view(self.db.execute("SELECT * FROM orders WHERE id=?", (cur.lastrowid,)).fetchone())
 
+    def _row(self, receipt):
+        o = self.db.execute("SELECT * FROM orders WHERE receipt=?", (receipt,)).fetchone()
+        if o is None:
+            raise ShopError("unknown order")
+        return o
+
     def _order_view(self, o):
-        r = self.db.execute("SELECT name, phone FROM shops WHERE id=?", (o["shop_id"],)).fetchone()
-        return {"ok": True, "receipt": o["receipt"], "shop": r["name"], "item": o["item"], "price": o["price"],
-                "eta_min": o["eta_min"], "cook_in_min": o["cook_in_min"], "status": o["status"]}
+        r = self.db.execute("SELECT name, phone, wait_min FROM shops WHERE id=?", (o["shop_id"],)).fetchone()
+        first = o["first_eta"] if o["first_eta"] is not None else o["eta_min"]
+        delay = o["eta_min"] - first
+        return {"ok": True, "receipt": o["receipt"], "shop": r["name"], "phone": r["phone"], "item": o["item"], "price": o["price"],
+                "eta_min": o["eta_min"], "first_eta_min": first, "delay_min": delay, "cook_in_min": o["cook_in_min"],
+                "status": o["status"], "status_label": STATUS_LABEL.get(o["status"], o["status"]),
+                "payment": o["payment"] or PAYMENT,
+                "start_cooking_now": o["status"] in ("placed", "accepted") and o["cook_in_min"] <= 0,
+                "shop_can": list(SHOP_NEXT.get(o["status"], ())), "car_can_cancel": o["status"] in CAR_CAN_CANCEL}
+
+    def track(self, receipt, lat=None, lon=None):
+        """The car asks how its order is going. A fresh position re-computes the arrival: stuck in a jam, the shop is told later."""
+        o = self._row(receipt)
+        if lat is not None and lon is not None and o["status"] in LIVE:
+            r = self.db.execute("SELECT * FROM shops WHERE id=?", (o["shop_id"],)).fetchone()
+            eta = eta_min(distance_km(lat, lon, r["lat"], r["lon"]))
+            with self.db:
+                self.db.execute("UPDATE orders SET eta_min=?, cook_in_min=?, car_lat=?, car_lon=?, updated_at=? WHERE id=?",
+                                (eta, max(0, eta - r["wait_min"]), lat, lon, self.clock(), o["id"]))
+            o = self._row(receipt)
+        return self._order_view(o)
+
+    def set_status(self, receipt, status):
+        """The shop moves the order forward (or declines it)."""
+        o = self._row(receipt)
+        if status not in SHOP_NEXT.get(o["status"], ()):
+            raise ShopError("bad transition")
+        with self.db:
+            self.db.execute("UPDATE orders SET status=?, updated_at=? WHERE id=?", (status, self.clock(), o["id"]))
+        return self._order_view(self._row(receipt))
+
+    def cancel(self, receipt):
+        """The car cancels: allowed until the shop starts cooking."""
+        o = self._row(receipt)
+        if o["status"] not in CAR_CAN_CANCEL:
+            raise ShopError("cannot cancel")
+        with self.db:
+            self.db.execute("UPDATE orders SET status='cancelled', updated_at=? WHERE id=?", (self.clock(), o["id"]))
+        return self._order_view(self._row(receipt))
 
     def orders_for(self, shop_id, limit=20):
-        """What the shop would see on its own screen: the latest orders, with when to start cooking."""
+        """What the shop sees on its own screen: the latest orders, the live arrival time, and what it may do next."""
         rows = self.db.execute("SELECT * FROM orders WHERE shop_id=? ORDER BY id DESC LIMIT ?", (shop_id, limit)).fetchall()
-        return [{"receipt": o["receipt"], "item": o["item"], "price": o["price"], "eta_min": o["eta_min"],
-                 "cook_in_min": o["cook_in_min"], "status": o["status"]} for o in rows]
+        out = []
+        for o in rows:
+            v = self._order_view(o)
+            out.append({k: v[k] for k in ("receipt", "item", "price", "eta_min", "first_eta_min", "delay_min", "cook_in_min",
+                                          "status", "status_label", "payment", "start_cooking_now", "shop_can")})
+        return out

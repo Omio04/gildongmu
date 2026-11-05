@@ -103,13 +103,30 @@ class ApiClient(private val base: String = "http://10.0.2.2:8080") {
     }
 
     /** Pay for one item: the server records the order for the shop (a mock payment) and answers with a receipt, or null. */
-    fun orderShop(shopId: String, item: String, lat: Double, lon: Double, key: String): OrderReceipt? {
+    fun orderShop(shopId: String, item: String, lat: Double, lon: Double, key: String, paymentToken: String): OrderReceipt? {
         val body = JSONObject().put("shop_id", shopId).put("item", item).put("lat", lat).put("lon", lon).put("key", key)
+            .put("payment_token", paymentToken)   // what the payment provider gave back when the card was registered, never the card number
         val (code, text) = call("POST", "/api/shops/order", body)
         if (code != 200) return null
-        val o = JSONObject(text)
-        return OrderReceipt(o.getString("receipt"), o.getString("shop"), o.getString("item"), o.getInt("price"),
-            o.getInt("eta_min"), o.getInt("cook_in_min"), o.getString("status"))
+        return parseOrder(JSONObject(text))
+    }
+
+    private fun parseOrder(o: JSONObject) = OrderReceipt(
+        o.getString("receipt"), o.getString("shop"), o.getString("item"), o.getInt("price"),
+        o.getInt("eta_min"), o.getInt("cook_in_min"), o.getString("status"), o.optString("status_label", ""),
+        o.optInt("delay_min", 0), o.optBoolean("car_can_cancel", false), o.optString("payment", ""), o.optString("phone", ""))
+
+    /** How the order is going now; the car's position lets the server move the arrival time if the car is held up. */
+    fun trackOrder(receipt: String, lat: Double?, lon: Double?): OrderReceipt? {
+        val pos = if (lat != null && lon != null) "&lat=$lat&lon=$lon" else ""
+        val (code, text) = call("GET", "/api/shops/order?receipt=$receipt$pos")
+        return if (code == 200) parseOrder(JSONObject(text)) else null
+    }
+
+    /** The car cancels an order the shop has not started cooking. */
+    fun cancelOrderOnServer(receipt: String): OrderReceipt? {
+        val (code, text) = call("POST", "/api/shops/order/cancel", JSONObject().put("receipt", receipt))
+        return if (code == 200) parseOrder(JSONObject(text)) else null
     }
 
     fun inbox(after: Int): List<Inbound> {

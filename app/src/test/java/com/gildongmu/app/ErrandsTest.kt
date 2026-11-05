@@ -65,4 +65,15 @@ class ErrandsTest {
         val s = Errands.spoken(p)
         assertTrue("해뜰커피 DT" in s && "4,500원" in s && "결제" in s && "단골" in s)
     }
+
+    @Test
+    fun `a menu item named by voice is matched within the shop and a status is spoken plainly`() {
+        val shop = view.shops.first()   // 해뜰커피 DT: 아메리카노, 크로와상
+        assertEquals("크로와상", Errands.itemNamed(shop, "크로와상으로 할게")?.name)
+        assertEquals(null, Errands.itemNamed(shop, "버거 주세요"))
+        val o = OrderReceipt("D-1001", "해뜰커피 DT", "아메리카노", 4500, 4, 0, "cooking", "조리 중", delayMin = 2)
+        val line = Errands.statusSpoken(o)
+        assertTrue("조리 중" in line && "4분" in line && "2분 늦어졌어요" in line)
+        assertTrue("도착" !in Errands.statusSpoken(o.copy(status = "picked_up", statusLabel = "수령 완료")))
+    }
 }

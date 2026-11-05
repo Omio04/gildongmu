@@ -345,6 +345,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, shopbook.near(float(q["lat"]), float(q["lon"]), float(q.get("radius", shopsmod.RANGE_KM))))
             if u.path == "/api/shops/orders":   # what one shop would see on its own screen
                 return self._json(200, {"items": shopbook.orders_for(str(q["shop_id"]))})
+            if u.path == "/api/shops/order":   # the car asks how its order is going (a fresh position re-computes the arrival)
+                try:
+                    lat = float(q["lat"]) if "lat" in q else None
+                    lon = float(q["lon"]) if "lon" in q else None
+                    return self._json(200, shopbook.track(str(q["receipt"]), lat, lon))
+                except shopsmod.ShopError as e:
+                    return self._json(404, {"error": str(e)})
             if u.path == "/api/hazard/proposal":   # does the car think it sees something? (the driver decides)
                 return self._json(200, {"proposal": hazards.proposal()})
             if u.path == "/api/hazard/mine":
@@ -511,11 +518,24 @@ class Handler(BaseHTTPRequestHandler):
                 except shopsmod.ShopError as e:
                     return self._json(422, {"error": str(e)})
 
+            if u.path == "/api/shops/order/status":   # the shop moves an order forward (test server: no shop sign-in yet)
+                try:
+                    return self._json(200, shopbook.set_status(str(data["receipt"]), str(data["status"])))
+                except shopsmod.ShopError as e:
+                    return self._json(422, {"error": str(e)})
+
+            if u.path == "/api/shops/order/cancel":   # the car cancels, until the shop starts cooking
+                try:
+                    return self._json(200, shopbook.cancel(str(data["receipt"])))
+                except shopsmod.ShopError as e:
+                    return self._json(422, {"error": str(e)})
+
             if u.path == "/api/shops/order":   # the driver said or tapped pay: recorded for the shop, nothing is charged
                 try:
                     key = str(data["key"])[:64] if data.get("key") else None
                     return self._json(200, shopbook.order(str(data["shop_id"]), str(data["item"]), ME,
-                                                          float(data["lat"]), float(data["lon"]), key=key))
+                                                          float(data["lat"]), float(data["lon"]), key=key,
+                                                          payment_token=data.get("payment_token")))
                 except shopsmod.ShopError as e:
                     return self._json(422, {"error": str(e)})
 

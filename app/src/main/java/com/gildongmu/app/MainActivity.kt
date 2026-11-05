@@ -243,7 +243,7 @@ class MainActivity : AppCompatActivity() {
             }
             // --es say "커피 마시고 싶어,결제": what the recogniser would have heard, one phrase every 4 s (the microphone itself is not exercised)
             intent.getStringExtra("say")?.split(",")?.forEachIndexed { i, phrase ->
-                ui.postDelayed({ handleHeard(phrase.trim()) }, 12_000L + i * 4_000L)
+                ui.postDelayed({ handleHeard(phrase.trim()) }, intent.getIntExtra("say_delay", 12) * 1_000L + i * 4_000L)
             }
             if (intent.hasExtra("fake_lat") && intent.hasExtra("fake_lon"))
                 fakePlace = Place(intent.getFloatExtra("fake_lat", 0f).toDouble(), intent.getFloatExtra("fake_lon", 0f).toDouble(), 0.0, "시험 위치")
@@ -275,6 +275,7 @@ class MainActivity : AppCompatActivity() {
         ui.postDelayed(object : Runnable {   // the car moves: which pickup shops are in range changes, so redraw the idle slot
             override fun run() {
                 if (order == null && note == null && answers.isEmpty() && questions.isEmpty() && roadMessages.isEmpty()) refreshShops()   // the answer redraws the slot
+                trackActiveOrder()
                 ui.postDelayed(this, 10_000)
             }
         }, 10_000)
@@ -932,7 +933,9 @@ class MainActivity : AppCompatActivity() {
                 press(box)
             }
             col.addView(head)
-            val wantsPrompt = !post.mine && post.myVote == null && post.id !in skipped && !promptShown
+            // the neighbour who just answered my question already has a "도움이 됐어요" in the answers card: the same thing is not asked twice
+            val answeredMe = answers.any { it.from == post.by }
+            val wantsPrompt = !post.mine && post.myVote == null && post.id !in skipped && !promptShown && !answeredMe
             if (wantsPrompt) {
                 promptShown = true
                 col.addView(reactionRow(post), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
@@ -1235,6 +1238,11 @@ class MainActivity : AppCompatActivity() {
     private fun routeSpoken(spoken: String) {
         if (voiceProfile(spoken)) return
         if (spoken.replace(" ", "").let { "전체" in it && "보" in it } && favourites().isNotEmpty()) { showAllShops = true; renderAnswers(); return }
+        activeOrder?.let { o ->   // "주문 취소", "주문 어떻게 됐어?": about the order on its way
+            val w = spoken.replace(" ", "")
+            if ("주문" in w && listOf("취소", "그만").any { it in w }) { if (o.carCanCancel) cancelActiveOrder() else speak("가게가 조리를 시작해서 취소할 수 없어요"); return }
+            if ("주문" in w && listOf("어떻게", "상태", "언제", "됐", "어디").any { it in w }) { speak(Errands.statusSpoken(o)); return }
+        }
         val type = Errands.matchType(spoken)
         if (type != null) openList(type) else propose(spoken)
     }
@@ -1245,6 +1253,27 @@ class MainActivity : AppCompatActivity() {
     private var shopLoading = false
     private var shopFailed = false
     private var orderKey = ""
+    private fun payToken(): String? = getSharedPreferences("gildongmu", MODE_PRIVATE).getString("pay_token", null)
+    private fun payLast4(): String = getSharedPreferences("gildongmu", MODE_PRIVATE).getString("pay_last4", "1234") ?: "1234"
+
+    /**
+     * MOCK card registration, done once while stopped (a real one is done on the phone or the web with the card company's
+     * screen, and the car only keeps the token it gets back). Here a made-up token is stored: no card number exists anywhere.
+     */
+    private fun registerCard() {
+        val chars = "abcdefghijklmnopqrstuvwxyz0123456789"
+        val tok = "tok_" + (1..12).map { chars.random() }.joinToString("")
+        getSharedPreferences("gildongmu", MODE_PRIVATE).edit().putString("pay_token", tok).putString("pay_last4", "1234").apply()
+        flash("결제 수단을 등록했어요 · 카드 ****1234 (모의)", "결제 수단")
+    }
+
+    private fun removeCard() {
+        getSharedPreferences("gildongmu", MODE_PRIVATE).edit().remove("pay_token").remove("pay_last4").apply()
+        flash("결제 수단을 삭제했어요", "결제 수단")
+    }
+
+    private var activeOrder: OrderReceipt? = null   // the order being made (paid), followed until it is picked up or cancelled
+    private var lastOrderStatus = ""
     private var showAllShops = false                  // favourites are set, but the driver asked to see every shop for now
 
     private fun favourites(): Set<String> = getSharedPreferences("gildongmu", MODE_PRIVATE).getStringSet("fav_brands", emptySet())!!.toSet()
@@ -1280,6 +1309,7 @@ class MainActivity : AppCompatActivity() {
     /** The idle slot: what the driver can ask for, from the shops in range. While driving: only what to say. */
     private fun renderErrands() {
         if (order != null) return
+        activeOrder?.let { renderTracking(it); return }   // an order is on its way: follow it instead of offering new ones
         if (!touchOk()) {   // driving: nothing that cannot be used is shown; only what to say
             answersList.addView(text("운전 중이에요 · 말로 해 보세요", 18f, t.ink, 2), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
             answersList.addView(text("“커피 마시고 싶어” · “앞에 드라이브스루 뭐 있어?”", 16f, t.accent, 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) })
@@ -1346,7 +1376,14 @@ class MainActivity : AppCompatActivity() {
      */
     private fun openList(key: String) {
         val v = shopView
-        if (v == null) { refreshShops(key); return }
+        if (v == null) {
+            if (currentPlace() == null) {   // no position yet: say so, instead of staying silent
+                val msg = "아직 위치를 몰라요 · 잠시 뒤에 다시 말해 주세요"
+                flash(msg, "가는 길 픽업"); if (!info.canSend || !touchOk()) speak(msg)
+                return
+            }
+            refreshShops(key); return
+        }
         val list = Errands.picks(v, key, activeFavs())
         pickedCar = null; profileOpen = false; pendingReport = null; order = null
         if (list.isEmpty()) {
@@ -1394,15 +1431,106 @@ class MainActivity : AppCompatActivity() {
         attentionCard.addView(text("${p.item.name} · ${p.item.priceText()}", 17f, t.ink, 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(3) })
         attentionCard.addView(text("도착 ${s.etaMin}분 뒤 · " + (if (s.cookInMin > 0) "${s.cookInMin}분 뒤 조리 시작" else "바로 조리 시작") + " · ☎ ${s.phone}", 14f, t.muted, 1),
             LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(3) })
+        attentionCard.addView(text(if (payToken() != null) "결제: 등록 카드 ****${payLast4()} (모의 결제) · ${p.item.priceText()}" else "결제 수단이 없어요 · 먼저 등록해 주세요 (정차 중)", 13f, t.muted, 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
+        if (s.menu.size > 1 && info.canSend && touchOk()) {   // another item of the same shop: one tap
+            val menuRow = LinearLayout(this)
+            s.menu.take(3).forEach { m ->
+                menuRow.addView(text(m.name, 14f, if (m == p.item) Color.WHITE else t.ink, 2).apply {
+                    gravity = Gravity.CENTER; maxLines = 1
+                    background = if (m == p.item) fill(t.navyFill, 10) else outline()
+                    setPadding(dp(4), dp(9), dp(4), dp(9))
+                    setOnClickListener { order = Pick(s, m); orderKey = java.util.UUID.randomUUID().toString(); renderAnswers() }; press(this)
+                }, LinearLayout.LayoutParams(0, -2, 1f).apply { if (menuRow.childCount > 0) leftMargin = dp(6) })
+            }
+            attentionCard.addView(menuRow, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+        }
         if (!info.canSend || !touchOk()) {
             attentionCard.addView(text("“결제”, “메뉴”, “다른 곳”, “단골”, “취소”라고 말해 주세요", 13f, t.muted), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) })
             return
         }
         val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        row.addView(actionBtn("결제하기", t.accent, Color.WHITE, 18f) { payOrder() }, LinearLayout.LayoutParams(0, -2, 1.6f))
+        if (payToken() == null) row.addView(actionBtn("결제 수단 등록(모의)", t.accent, Color.WHITE, 17f) { registerCard(); renderAnswers() }, LinearLayout.LayoutParams(0, -2, 1.6f))
+        else row.addView(actionBtn("결제하기", t.accent, Color.WHITE, 18f) { payOrder() }, LinearLayout.LayoutParams(0, -2, 1.6f))
         if (alts.size > 1) row.addView(actionBtn("다른 곳", t.surface, t.muted, 16f) { nextShop() }, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
         row.addView(actionBtn("취소", t.surface, t.muted, 16f) { cancelOrder() }, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
         attentionCard.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
+    }
+
+    /** The order made, as the slot shows it: where it is, when the car arrives, and a way to cancel while that is still possible. */
+    private fun renderTracking(o: OrderReceipt) {
+        answersList.addView(text("${o.shop} · ${o.item}", 17f, t.ink, 2).apply { maxLines = 1 }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
+        answersList.addView(text(o.statusLabel + (if (!o.finished) " · 도착 ${o.etaMin}분 뒤" + (if (o.delayMin > 0) " · 막혀서 +${o.delayMin}분" else "") else ""),
+            16f, t.accent, 2), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
+        val canTap = o.carCanCancel && touchOk() && info.canSend
+        if (!canTap) answersList.addView(text("접수번호 ${o.receipt} · ${o.payment.ifBlank { "모의 결제" }}", 13f, t.muted, 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(3) })   // the cancel button needs the room
+        if (o.carCanCancel) {
+            if (canTap)
+                answersList.addView(actionBtn("주문 취소 · ${o.receipt}", t.surface, t.muted, 15f) { cancelActiveOrder() }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
+            else answersList.addView(text("“주문 취소”, “주문 어떻게 됐어?”라고 말해 보세요", 13f, t.muted), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) })
+        } else if (o.status == "cooking") {
+            answersList.addView(text("조리 중이라 취소는 전화로 · ☎ ${o.phone}", 13f, t.muted), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
+        } else if (o.status == "ready") {
+            answersList.addView(text("도착하면 바로 받으세요", 13f, t.muted), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
+        }
+    }
+
+    /** Follow the order made: ask the server how it is going. A change is spoken; a held-up car moves the arrival time later. */
+    private fun trackActiveOrder() {
+        val o = activeOrder ?: run { restoreActiveOrder(); return }
+        val here = currentPlace() ?: return
+        io.execute {
+            val r = try { api.trackOrder(o.receipt, here.lat, here.lon) } catch (_: Exception) { null }
+            ui.post {
+                if (r == null || activeOrder?.receipt != o.receipt) return@post
+                val changed = r.status != lastOrderStatus
+                val later = r.delayMin >= o.delayMin + 2
+                activeOrder = r
+                if (changed) {
+                    lastOrderStatus = r.status
+                    speak(when (r.status) {
+                        "accepted" -> "${r.shop}이 주문을 받았어요"
+                        "cooking" -> "조리를 시작했어요"
+                        "ready" -> "준비가 끝났어요. 도착하면 바로 받으세요"
+                        "picked_up" -> "수령이 끝났어요. 맛있게 드세요"
+                        "cancelled" -> "주문이 취소됐어요"
+                        else -> r.statusLabel
+                    })
+                } else if (later && !r.finished) speak("길이 막혀 도착이 ${r.delayMin}분 늦어졌어요. 가게에 알렸어요")
+                if (r.finished) { forgetActiveOrder(); ui.postDelayed({ if (activeOrder?.receipt == r.receipt) { activeOrder = null; renderAnswers() } }, 8_000) }
+                if (order == null && note == null && answers.isEmpty() && questions.isEmpty() && roadMessages.isEmpty()) renderAnswers()
+            }
+        }
+    }
+
+    /** After a restart: pick the order up again from the server, if it is still going. */
+    private fun restoreActiveOrder() {
+        val prefs = getSharedPreferences("gildongmu", MODE_PRIVATE)
+        val receipt = prefs.getString("active_receipt", null) ?: return
+        io.execute {
+            val r = try { api.trackOrder(receipt, null, null) } catch (_: Exception) { null }
+            ui.post {
+                if (r == null) return@post
+                if (r.finished) { prefs.edit().remove("active_receipt").apply(); return@post }
+                if (activeOrder == null) { activeOrder = r; lastOrderStatus = r.status; renderAnswers() }
+            }
+        }
+    }
+
+    private fun forgetActiveOrder() = getSharedPreferences("gildongmu", MODE_PRIVATE).edit().remove("active_receipt").apply()
+
+    private fun cancelActiveOrder() {
+        val o = activeOrder ?: return
+        io.execute {
+            val r = try { api.cancelOrderOnServer(o.receipt) } catch (_: Exception) { null }
+            ui.post {
+                if (r == null) { flash("지금은 취소할 수 없어요 · 가게가 이미 조리를 시작했을 수 있어요", "가는 길 픽업"); return@post }
+                activeOrder = r; lastOrderStatus = r.status
+                speak("주문을 취소했어요")
+                forgetActiveOrder()
+                ui.postDelayed({ if (activeOrder?.receipt == r.receipt) { activeOrder = null; renderAnswers() } }, 6_000)
+                renderAnswers()
+            }
+        }
     }
 
     /** Pay: the order goes to the server, which records it for the shop and answers with a receipt number. */
@@ -1410,14 +1538,22 @@ class MainActivity : AppCompatActivity() {
         val p = order ?: return
         val here = currentPlace()
         if (here == null) { flash("아직 위치를 몰라요", "가는 길 픽업"); return }
+        val token = payToken()
+        if (token == null) {   // no card yet: it is registered once, while stopped (never while driving)
+            val msg = "먼저 결제 수단을 등록해 주세요. 차를 세운 뒤 화면에서 등록할 수 있어요"
+            flash(msg, "결제 수단"); if (!info.canSend || !touchOk()) speak(msg)
+            return
+        }
         val key = orderKey
         io.execute {
-            val r = try { api.orderShop(p.shop.id, p.item.name, here.lat, here.lon, key) } catch (_: Exception) { null }
+            val r = try { api.orderShop(p.shop.id, p.item.name, here.lat, here.lon, key, token) } catch (_: Exception) { null }
             ui.post {
                 if (order !== p) return@post   // cancelled meanwhile
                 if (r == null) { flash("주문을 보내지 못했어요 · 연결을 확인해 주세요", "가는 길 픽업"); return@post }
                 order = null; alts = emptyList()
-                speak("주문했어요. 접수번호 ${r.receipt}")
+                activeOrder = r; lastOrderStatus = r.status
+                getSharedPreferences("gildongmu", MODE_PRIVATE).edit().putString("active_receipt", r.receipt).apply()   // survives the app being restarted
+                speak("주문했어요. 접수번호 ${r.receipt}. 가게에 알렸어요")
                 flash("${r.shop} · ${r.item} · ${"%,d원".format(r.price)} · 접수번호 ${r.receipt} · " +
                     (if (r.cookInMin > 0) "${r.cookInMin}분 뒤 조리 시작 예정" else "바로 조리 시작") + " · 시험용, 실제 결제 없음", "주문 접수", 8_000)
             }
@@ -1434,6 +1570,12 @@ class MainActivity : AppCompatActivity() {
         val p = order ?: return
         when {
             listOf("취소", "그만", "아니", "됐어").any { it in w } -> cancelOrder()
+            Errands.itemNamed(p.shop, said) != null && Errands.itemNamed(p.shop, said) != p.item -> {   // "아이스 라떼로": another item of this shop
+                val m = Errands.itemNamed(p.shop, said)!!
+                order = Pick(p.shop, m); orderKey = java.util.UUID.randomUUID().toString()
+                speakThen("${m.name} ${m.priceText()}으로 바꿨어요. 결제할까요?", "confirm")
+                renderAnswers()
+            }
             listOf("메뉴", "뭐있", "가격", "얼마").any { it in w } -> speakThen(Errands.menuSpoken(p.shop), "confirm")
             listOf("단골", "즐겨찾기").any { it in w } -> toggleFavourite(p.shop.brand)
             listOf("다른", "다음", "딴").any { it in w } -> nextShop()
@@ -2048,7 +2190,7 @@ class MainActivity : AppCompatActivity() {
         attentionCard.addView(colors, lp(6))
 
         // the Hyundai model: one tap on a chip. All twelve are on screen at once (4 x 3): no sideways scrolling to fight with
-        attentionCard.addView(text("내 차 (현대)", 13f, t.muted, 1), lp(12))
+        attentionCard.addView(text("나의 차량", 13f, t.muted, 1), lp(12))
         MODELS.chunked(4).forEachIndexed { r, chunk ->
             val row = LinearLayout(this)
             chunk.forEachIndexed { i, name ->
@@ -2057,6 +2199,13 @@ class MainActivity : AppCompatActivity() {
             }
             attentionCard.addView(row, lp(if (r == 0) 6 else 8))
         }
+
+        // the payment method, set once while stopped: the car keeps only a token (mock here)
+        val payRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        payRow.addView(text(if (payToken() != null) "결제 수단 · 카드 ****${payLast4()} (모의)" else "결제 수단 · 아직 없어요", 14f, t.muted, 1), LinearLayout.LayoutParams(0, -2, 1f))
+        payRow.addView(profileChip(if (payToken() != null) "삭제" else "등록(모의)", payToken() == null, compact = true) { if (payToken() != null) removeCard() else registerCard(); renderAnswers() },
+            LinearLayout.LayoutParams(dp(110), -2))
+        attentionCard.addView(payRow, lp(10))
 
         // privacy and done
         val foot = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
