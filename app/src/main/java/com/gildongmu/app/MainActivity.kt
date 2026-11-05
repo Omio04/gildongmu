@@ -1300,7 +1300,7 @@ class MainActivity : AppCompatActivity() {
         activeOrder?.let { o ->   // "주문 취소", "주문 어떻게 됐어?": about the order on its way
             val w = spoken.replace(" ", "")
             if ("경유지" in w || ("내비" in w && "넣" in w)) { addShopWaypoint(); return }
-            if ("주문" in w && listOf("취소", "그만").any { it in w }) { if (o.carCanCancel) cancelActiveOrder() else speak("가게가 조리를 시작해서 취소할 수 없어요"); return }
+            if ("주문" in w && listOf("취소", "그만").any { it in w }) { speak("결제한 주문은 앱에서 취소할 수 없어요. 가게로 전화해 주세요"); return }
             if ("주문" in w && listOf("어떻게", "상태", "언제", "됐", "어디").any { it in w }) { speak(Errands.statusSpoken(o)); return }
         }
         if (kindChooser) {   // the window is open: a kind, a shop's name or a thing to buy picks; or close it
@@ -1716,14 +1716,11 @@ class MainActivity : AppCompatActivity() {
         val line = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         line.addView(text(o.statusLabel + (if (!o.finished) " · 도착 ${o.etaMin}분 뒤" + (if (o.delayMin > 0) " · 막혀서 +${o.delayMin}분" else "") else ""),
             15f, t.accent, 2).apply { maxLines = 1 }, LinearLayout.LayoutParams(0, -2, 1f))
-        val canTap = o.carCanCancel && touchOk() && info.canSend
-        if (canTap) line.addView(profileChip("주문 취소", false, compact = true) { cancelActiveOrder() }, LinearLayout.LayoutParams(dp(110), -2))
         answersList.addView(line, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
         val hint = when {
             waypointAdded -> "내비 경유지에 넣었어요" + (routeEta?.let { " · 길 따라 ${it}분" } ?: "")
             trip != null && !o.finished && activeShop != null -> "“경유지”라고 말하면 내비 길에 넣어요"
-            o.carCanCancel && !canTap -> "“주문 취소”, “주문 어떻게 됐어?”라고 말해 보세요"
-            o.status == "cooking" -> "조리 중이라 취소는 전화로 · ☎ ${o.phone}"
+            o.status == "cooking" -> "결제한 주문은 취소가 안 돼요 · 문의 ☎ ${o.phone}"
             o.status == "ready" -> "도착하면 바로 받으세요"
             else -> "접수번호 ${o.receipt}"
         }
@@ -1786,21 +1783,6 @@ class MainActivity : AppCompatActivity() {
         if (ok) { waypointAdded = true; speak("${shop.name}을 내비 경유지에 넣었어요"); ui.postDelayed({ navi?.refreshWaypoint() }, 2_500) }
         else speak("지금은 경유지로 넣을 수 없어요")
         renderAnswers()
-    }
-
-    private fun cancelActiveOrder() {
-        val o = activeOrder ?: return
-        io.execute {
-            val r = try { api.cancelOrderOnServer(o.receipt) } catch (_: Exception) { null }
-            ui.post {
-                if (r == null) { flash("지금은 취소할 수 없어요 · 가게가 이미 조리를 시작했을 수 있어요", "가는 길 픽업"); return@post }
-                activeOrder = r; lastOrderStatus = r.status
-                speak("주문을 취소했어요")
-                forgetActiveOrder()
-                ui.postDelayed({ if (activeOrder?.receipt == r.receipt) { activeOrder = null; renderAnswers() } }, 6_000)
-                renderAnswers()
-            }
-        }
     }
 
     /** Pay: the order goes to the server, which records it for the shop and answers with a receipt number. */
