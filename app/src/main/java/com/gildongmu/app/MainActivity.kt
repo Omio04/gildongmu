@@ -260,7 +260,6 @@ class MainActivity : AppCompatActivity() {
             if (intent.hasExtra("fake_lat") && intent.hasExtra("fake_lon"))
                 fakePlace = Place(intent.getFloatExtra("fake_lat", 0f).toDouble(), intent.getFloatExtra("fake_lon", 0f).toDouble(), 0.0, "시험 위치")
             intent.getStringExtra("demo_hazard")?.let { k -> ui.postDelayed({ io.execute { try { java.net.URL("${serverUrl()}/api/demo/event?kind=$k").readText() } catch (_: Exception) {} } }, 4000) }
-            if (intent.getBooleanExtra("demo_nudge", false)) ui.postDelayed({ showNudge(JamReason.SUDDEN) }, 5000)
             if (intent.getBooleanExtra("demo_pick", false)) ui.postDelayed({ neighbors.firstOrNull()?.let { onCarTapped(it.id) } }, 4500)   // the card of a tapped car
             if (intent.getBooleanExtra("demo_ask_car", false)) ui.postDelayed({ neighbors.firstOrNull()?.let { askCar = it; askCarAt = System.currentTimeMillis() } }, 4500)   // as if "이 차에 물어보기" was tapped
             intent.getStringExtra("demo_heard")?.let { said -> ui.postDelayed({ propose(said) }, 5000) }   // the "이렇게 들었어요" card
@@ -873,7 +872,6 @@ class MainActivity : AppCompatActivity() {
         trip = tr
         destName = tr.destination
         io.execute { try { api.setDestination(tr.destination) } catch (_: Exception) {} }
-        jam.onRemaining(System.currentTimeMillis(), tr.remainMin)?.let { showNudge(it) }
         renderState()
     }
 
@@ -1150,7 +1148,6 @@ class MainActivity : AppCompatActivity() {
     /** Feeds the detector with the current speed. Called on every reading and every few seconds. */
     private fun evaluateJam() {
         val speed = info.speedKmh ?: return
-        jam.onSpeed(System.currentTimeMillis(), speed, info.state == DriveState.PARKED)?.let { showNudge(it) }
     }
 
     /**
