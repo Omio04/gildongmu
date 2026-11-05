@@ -119,4 +119,11 @@ class ErrandsTest {
         assertNull(Errands.shopFor(v, "주차장에 자리 있어요"))               // never taken for a shop request
         assertTrue("생수" in Errands.sellingSpoken(fuel) && "샌드위치" in Errands.sellingSpoken(fuel))
     }
+
+    @Test
+    fun `only a clear pay word or a bare yes pays, passing talk never does`() {
+        for (yes in listOf("결제", "결제해줘", "응", "네", "좋아요", "주문해 줘")) assertTrue(yes, Errands.isPayWord(yes))
+        for (no in listOf("네 그건 그렇고 휴게소가 어디야", "아니 그건 좋아 보이는데", "응 엄마 지금 가는 중이야", "오늘 날씨 좋아서 그래", "안녕하세요", ""))
+            assertTrue(no, !Errands.isPayWord(no))
+    }
 }

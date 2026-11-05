@@ -24,8 +24,8 @@ import kotlin.math.sin
  * coordinates are ever shown.
  *
  * What moves, and why:
- *  - The lane marks always scroll at a pace that follows the real speed (a slow crawl when stopped, like traffic
- *    inching along), eased so a change of speed never jumps.
+ *  - The lane marks stand still when parked or stopped, and when the car moves they ease up to one steady pace (not
+ *    tied to the real speed) and ease back to a halt when it stops.
  *  - The cars around us drift a little back and forth, each on its own slow rhythm, the way traffic in a jam
  *    stretches and closes up.
  *  - While a question is out, rings spread from our car; a car that answers glows once and keeps a blue halo.
@@ -71,7 +71,7 @@ class RoadView(
 
     /** Vehicle speed; the lane marks scroll in proportion (0 = standing still, the road still inches along). */
     var speedKmh: Float = 0f
-        set(v) { field = v; lastFrame = 0L; invalidate() }
+        set(v) { field = v; invalidate() }
 
     /** A tap on a neighbour's car, with that car's id. Null = cars are not tappable (e.g. while driving). */
     var onCarTap: ((String) -> Unit)? = null
@@ -137,7 +137,7 @@ class RoadView(
     }
 
     private var scroll = 0f
-    private var pace = IDLE_KMH
+    private var pace = 0f
     private var lastFrame = 0L
     private val litAt = HashMap<String, Long>()
     private val seenAt = HashMap<String, Long>()   // when a car first showed up: it fades in with a green ring
@@ -178,14 +178,17 @@ class RoadView(
 
         // lane dashes scroll
         val period = 56 * d
-        val target = if (speedKmh > 0f) speedKmh else IDLE_KMH
+        // parked or stopped in D: the road stands still. Moving (pedal pressed, speed above the limit): it eases up to one steady
+        // pace and stays there, whatever the real speed; stopping eases back to a halt.
+        val target = if (moving) CRUISE_KMH else 0f
         if (running) {
             if (lastFrame != 0L) {
                 val dt = ((now - lastFrame) / 1000f).coerceAtMost(0.1f)
-                pace += (target - pace) * (1f - Math.exp(-3.0 * dt).toFloat())   // eased: a change of speed never jumps
-                val pxPerSec = (22f + pace.coerceAtMost(90f) * 2.1f) * d
-                scroll = (scroll + dt * pxPerSec) % period
-            } else pace = target
+                val rate = if (target > pace) 0.9 else 2.5   // slow to get going, quicker to settle when stopping
+                pace += (target - pace) * (1f - Math.exp(-rate * dt).toFloat())
+                if (target == 0f && pace < 0.5f) pace = 0f
+                scroll = (scroll + dt * (pace / CRUISE_KMH) * CRUISE_PX_PER_SEC * d) % period
+            }
             lastFrame = now
         } else lastFrame = 0L
         for (i in 1..2) {
@@ -422,7 +425,9 @@ class RoadView(
 
     private companion object {
         const val MAX_NEIGHBOUR_BUBBLES = 2   // plus our own: the road stays readable
-        const val IDLE_KMH = 8f               // how fast the road flows when the car is stopped
+        const val CRUISE_KMH = 50f            // the one steady pace the road flows at while moving
+        const val CRUISE_PX_PER_SEC = 127f    // the same look as before at 50 km/h
+        const val IDLE_KMH = 8f
         const val MAX_CARS = 6               // the road has room for this many; the rest are counted on the chip
         const val RADIUS = 300f              // metres from our car to the top of the road view
         const val MY_Y = 0.78f               // our car's height on the road, 0 = far ahead, 1 = the bottom

@@ -13,7 +13,7 @@ Pleos App Market 접수 양식의 "앱 권한", "개인정보 처리" 항목에 
 | `pleos.car.permission.FUSED_LOCATION` | Pleos FusedLocation SDK로 차의 융합 위치를 먼저 쓰려고 | **개인정보 동의 후**, 앱이 켜져 있는 동안(시스템이 허용 창을 띄움) | 내비 위치와 GPS로 대신함 |
 | `android.permission.ACCESS_FINE_LOCATION` | 가까운 차와의 거리를 재고 신고한 곳을 남기려고 | **개인정보 동의 후**, 앱이 켜져 있는 동안 | 근처 이웃이 보이지 않음 |
 | `android.permission.CAMERA` | 위험 신고에 붙일 사진 한 장 | 운전자가 낙하물·로드킬 신고를 열었을 때 한 번 찍고, **"촬영하고 신고"를 눌러야** 전송 | 사진 없이 신고됨 |
-| `android.permission.RECORD_AUDIO` | 말로 질문하고 답하려고 | 운전자가 마이크를 눌렀을 때 | 터치로만 사용 |
+| `android.permission.RECORD_AUDIO` | 말로 질문하고 답하려고 | 운전자가 마이크를 눌렀을 때, 그리고 앱이 질문을 읽어 준 직후(결제 확인 등) 자동으로 최대 3번 | 터치로만 사용 |
 | `android.permission.INTERNET` | 서버와 통신 | 항상 | 이웃 기능을 쓸 수 없음 |
 
 - `pleos.car.permission.NAVI_ROUTE_SEARCH`(경로 시작, **가게를 경유지로 추가**)는 **디버그 빌드에만** 있습니다. 이제 release에도 선언했습니다(경유지 추가가 차별점의 핵심이라서). **다만 앱마켓 심사가 승인된 퍼미션만 통과시킨다고 했고 이 권한이 승인 목록에 있는지는 확인하지 못했습니다.** 승인되지 않으면 이 줄을 빼야 하고, 그러면 경유지 기능은 꺼지고 직선거리 추정으로 돌아갑니다(앱 자체는 동작).

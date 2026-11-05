@@ -209,9 +209,17 @@ class MainActivity : AppCompatActivity() {
             }
         }
         voice = VoiceInput(this,
-            onHeard = { spoken -> ui.post { voiceWave.active = false; handleHeard(spoken) } },
-            onProblem = { msg -> ui.post { voiceWave.active = false; showNote(msg) } },
-            onListening = { ui.post { voiceWave.active = true } })
+            onHeard = { spoken -> ui.post { voiceWave.active = false; listening = false; orderListenTries = 0; handleHeard(spoken) } },
+            onProblem = { msg -> ui.post {
+                voiceWave.active = false; listening = false
+                // an order card is open and nothing was caught: listen again by itself (twice at most), so the driver need not tap
+                if (order != null && msg == "잘 듣지 못했어요" && orderListenTries < 2) {
+                    orderListenTries++
+                    renderAnswers()
+                    ui.postDelayed({ if (order != null && !listening) voice?.listen() }, 500)
+                } else showNote(msg)
+            } },
+            onListening = { ui.post { voiceWave.active = true; listening = true; if (order != null) renderAnswers() } })
 
         if (ContextCompat.checkSelfPermission(this, SPEED_PERMISSION) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, arrayOf(SPEED_PERMISSION), 1)
@@ -238,6 +246,7 @@ class MainActivity : AppCompatActivity() {
         if ((applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
             val filter = android.content.IntentFilter("com.gildongmu.app.DEBUG")
             val rx = object : android.content.BroadcastReceiver() { override fun onReceive(c: android.content.Context?, i: android.content.Intent) { ui.post { debugCommand(i) } } }
+            debugReceiver = rx
             if (android.os.Build.VERSION.SDK_INT >= 33) registerReceiver(rx, filter, android.content.Context.RECEIVER_EXPORTED) else registerReceiver(rx, filter)
             when (intent.getStringExtra("force_state")) {
                 "moving" -> ui.postDelayed({ forcedInfo = DriveInfo(DriveState.MOVING, true, 0x50, 32f); onDriveInfo(forcedInfo!!) }, 4000)
@@ -431,7 +440,7 @@ class MainActivity : AppCompatActivity() {
         listOf(
             "위치" to "가까운 차와의 거리를 재고, 신고한 곳을 남기고, 가까운 가게를 찾는 데만 써요. 다른 차에는 정확한 위치 대신 대략의 거리만 보여요.",
             "사진" to "위험을 신고할 때 ‘촬영하고 신고’를 누른 경우에만 한 장을 찍어요. 계속 녹화하지 않고, 서버에 ${PHOTO_DAYS}일 보관한 뒤 지워요.",
-            "음성" to "말한 소리는 글자로만 바꿔 쓰고 저장하지 않아요. 글자는 내가 확인하고 ‘보내기’를 누르기 전에는 아무에게도 가지 않아요.",
+            "음성" to "마이크는 내가 누르거나 앱이 무언가 물어본 직후에만 들어요. 말한 소리는 글자로만 바꿔 쓰고 저장하지 않아요. 글자는 내가 확인하고 ‘보내기’를 누르기 전에는 아무에게도 가지 않아요.",
             "이름·차종·주문" to "목록에서 고른 이름과 차종만 이웃에게 보여요. 가는 길 픽업은 시험용이라 실제 결제는 되지 않고, 주문(가게·메뉴·접수번호)만 서버에 기록돼요.",
             "신고" to "신고하면 이유가 기록되고, 신고된 이웃은 차단돼요. 신고 내용은 도로 관리 기관에 자동으로 전달되지 않아요.",
         ).forEach { (title, body) ->
@@ -470,6 +479,7 @@ class MainActivity : AppCompatActivity() {
         pollIo.shutdown(); io.shutdown()
         navi?.stop()
         gps.stop()
+        debugReceiver?.let { try { unregisterReceiver(it) } catch (_: Exception) {} }
         shopCache.clear()
         pleosFused?.stop(); pleosVehicle?.stop()
         monitor.stop()
@@ -1257,6 +1267,7 @@ class MainActivity : AppCompatActivity() {
     /** A spoken sentence: a pickup request if it names a kind of place, otherwise the normal "this is what I heard" flow. */
     /** Whatever was heard goes to whoever is waiting for an answer: a confirmation, a hazard, an order, an offer, or a new request. */
     private fun handleHeard(spoken: String) {
+        android.util.Log.i(TAG, "heard ${spoken.length} chars -> " + (if (confirmByVoice) "confirm" else if (hazard != null) "hazard" else if (order != null) "order" else if (nudge != null) "nudge" else "route"))   // length only, never the words
         if (confirmByVoice) answerConfirm(spoken)
         else if (hazard != null) answerHazard(spoken)
         else if (order != null) answerOrder(spoken)
@@ -1294,11 +1305,13 @@ class MainActivity : AppCompatActivity() {
             if ("주문" in w && listOf("취소", "그만").any { it in w }) { if (o.carCanCancel) cancelActiveOrder() else speak("가게가 조리를 시작해서 취소할 수 없어요"); return }
             if ("주문" in w && listOf("어떻게", "상태", "언제", "됐", "어디").any { it in w }) { speak(Errands.statusSpoken(o)); return }
         }
-        if (kindChooser) {   // the window is open: one word picks, or close it
+        if (kindChooser) {   // the window is open: a kind, a shop's name or a thing to buy picks; or close it
             val w0 = spoken.replace(" ", "")
             if (listOf("닫", "그만", "취소", "됐어").any { it in w0 }) { kindChooser = false; renderAnswers(); return }
             Errands.kindFromWord(spoken)?.let { openList(it); return }
-            speakThen("커피나 음료, 식사, 간식 중에 말해 주세요", "confirm"); return
+            shopView?.let { v -> Errands.shopFor(v, spoken)?.let { openShopListing(it); return } }
+            Errands.matchType(spoken)?.let { if (it != "ALL") { openList(it); return } }
+            speakThen("커피, 식사, 간식 중에 말하거나 가게 이름을 말해 주세요", "confirm"); return
         }
         shopView?.let { v -> Errands.shopFor(v, spoken)?.let { openShopListing(it); return } }
         val type = Errands.matchType(spoken)
@@ -1424,6 +1437,9 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private var debugReceiver: android.content.BroadcastReceiver? = null   // debug builds only: unregistered in onDestroy
+    private var listening = false                   // the microphone is open right now
+    private var orderListenTries = 0                 // automatic re-listens on the order card
     private var kindChooser = false                  // the "what do you need on the way?" window is open
     private var routeEta: Int? = null                // minutes along the real route to the shop, once it is a waypoint
     private var activeShop: Shop? = null             // the shop of the order being followed (its position goes to the navigation)
@@ -1513,18 +1529,10 @@ class MainActivity : AppCompatActivity() {
             }
             return
         }
-        answersList.addView(text("${km}km 안 제휴 가게(샘플) · 무엇이 필요하세요?", 13f, t.muted, 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
-        val row = LinearLayout(this)
-        kinds.forEach { kind ->
-            row.addView(text(Errands.label(kind), 15f, t.ink, 2).apply {
-                gravity = Gravity.CENTER
-                maxLines = 2
-                background = outline()
-                setPadding(dp(2), dp(14), dp(2), dp(14))
-                setOnClickListener { openList(kind) }; press(this)
-            }, LinearLayout.LayoutParams(0, -2, 1f).apply { if (row.childCount > 0) leftMargin = dp(6) })
-        }
-        answersList.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
+        // one button, not one per shop kind: touching it starts the same talk the home mic starts
+        answersList.addView(text("${km}km 안 제휴 가게(샘플)", 13f, t.muted, 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
+        answersList.addView(actionBtn("음성으로 주문·결제", t.accent, Color.WHITE, 18f) { openKindChooser() }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
+        answersList.addView(text("가게 이름이나 메뉴를 말해 보세요 · 예: “근처 스타벅스 알려줘”", 13f, t.muted, 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) })
         if (favourites().isNotEmpty()) {   // the driver has favourites: say which view this is, and let them switch
             answersList.addView(text(if (showAllShops) "전체 가게를 보는 중 · ★ 단골만 보기" else "★ 단골 가게만 보는 중 · 전체 보기", 14f, t.accent, 1).apply {
                 setPadding(0, dp(8), dp(8), dp(4))
@@ -1558,7 +1566,7 @@ class MainActivity : AppCompatActivity() {
         attentionCard.removeAllViews()
         attentionCard.visibility = View.VISIBLE
         attentionCard.addView(text("가는 길에 무엇이 필요하세요?", 20f, t.ink, 2), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
-        attentionCard.addView(text("말로 골라도 돼요 · 예: “커피”", 14f, t.muted, 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
+        attentionCard.addView(text(if (listening) "듣고 있어요 · 가게 이름이나 “커피”처럼 말해 보세요" else "말해 보세요 · 예: “근처 스타벅스” “커피”", 14f, if (listening) t.accent else t.muted, if (listening) 2 else 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
         val kinds = if (v == null) emptyList() else Errands.kindsIn(v, activeFavs())
         val row = LinearLayout(this)
         kinds.forEach { kind ->
@@ -1614,12 +1622,46 @@ class MainActivity : AppCompatActivity() {
     private fun openOrder(p: Pick) {
         order = p
         orderKey = java.util.UUID.randomUUID().toString()
-        if (!info.canSend || !touchOk()) speakThen(Errands.spoken(p), "confirm")
+        orderListenTries = 0
+        speakThen(Errands.spoken(p), "confirm")   // voice and touch both: the card is read out and then listened to, moving or stopped
         renderAnswers()
     }
 
     /** One look: where, which item, how much, when it will be ready. The payment is a mock: nothing is charged. */
+    private var payAsk: Pick? = null   // the "pay now?" window is open for this very pick (a new pick closes it by itself)
+    private fun confirming() = order != null && payAsk === order
+
+    /** "결제": not paid yet: the window shows what is bought and how, the voice asks once more, a spoken or touched yes pays. */
+    private fun askPay() {
+        val p = order ?: return
+        if (payToken() == null) { payOrder(); return }   // no card on file: says what to do
+        payAsk = p; orderListenTries = 0
+        speakThen("${p.shop.name}, ${p.item.name} ${p.item.priceText()}, ${payLabel()}로 결제할까요? 결제, 아니요 중에 말해 주세요", "confirm")
+        renderAnswers()
+    }
+
+    private fun renderPayConfirm(p: Pick) {
+        val s = p.shop
+        answersCount.text = ""
+        attentionCard.removeAllViews()
+        attentionCard.visibility = View.VISIBLE
+        attentionCard.addView(text("결제할까요?", 20f, t.ink, 2), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
+        attentionCard.addView(text("${s.name} · ${p.item.name}", 17f, t.ink, 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(10) })
+        attentionCard.addView(text(p.item.priceText(), 28f, t.accent, 2), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
+        attentionCard.addView(text("${payLabel()} · 도착 ${s.etaMin}분 뒤 받기", 14f, t.muted, 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
+        attentionCard.addView(text("시험용이라 실제로 돈이 나가지 않아요", 13f, t.muted, 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
+        if (info.canSend && touchOk()) {
+            val row = LinearLayout(this)
+            row.addView(actionBtn("결제", t.accent, Color.WHITE, 18f) { payOrder() }, LinearLayout.LayoutParams(0, -2, 1.4f))
+            row.addView(actionBtn("돌아가기", t.surface, t.muted, 16f) { payAsk = null; renderAnswers() }, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
+            attentionCard.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+        }
+        attentionCard.addView(text(if (listening) "듣고 있어요 · “결제” “아니요”" else "말로도 돼요 · “결제” “아니요”", 13f, if (listening) t.accent else t.muted, if (listening) 2 else 1),
+            LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(8) })
+    }
+
     private fun renderOrder(p: Pick) {
+        if (confirming()) { renderPayConfirm(p); return }
         val s = p.shop
         answersCount.text = ""
         attentionCard.removeAllViews()
@@ -1660,10 +1702,15 @@ class MainActivity : AppCompatActivity() {
         }
         val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         if (payToken() == null) row.addView(actionBtn("결제 수단 등록", t.accent, Color.WHITE, 17f) { openPayments() }, LinearLayout.LayoutParams(0, -2, 1.6f))
-        else row.addView(actionBtn("결제하기", t.accent, Color.WHITE, 18f) { payOrder() }, LinearLayout.LayoutParams(0, -2, 1.6f))
+        else row.addView(actionBtn("결제하기", t.accent, Color.WHITE, 18f) { askPay() }, LinearLayout.LayoutParams(0, -2, 1.6f))
         if (alts.size > 1) row.addView(actionBtn("다른 곳", t.surface, t.muted, 16f) { nextShop() }, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
         row.addView(actionBtn("닫기", t.surface, t.muted, 16f) { cancelOrder() }, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
         attentionCard.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
+        val voiceLine = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        voiceLine.addView(text(if (listening) "듣고 있어요 · “결제” “크로와상” “닫기”" else "말로도 돼요 · “결제” “크로와상” “닫기”", 13f, if (listening) t.accent else t.muted, if (listening) 2 else 1),
+            LinearLayout.LayoutParams(0, -2, 1f))
+        if (!listening) voiceLine.addView(profileChip("다시 말하기", false, compact = true) { orderListenTries = 0; startVoice() }, LinearLayout.LayoutParams(dp(120), -2))   // only a backup
+        attentionCard.addView(voiceLine, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
     }
 
     /** The order made, as the slot shows it: where it is, when the car arrives, and a way to cancel while that is still possible. */
@@ -1813,15 +1860,23 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun cancelOrder() {
-        order = null; alts = emptyList()
+        order = null; alts = emptyList(); payAsk = null
         flash("주문을 취소했어요", "가는 길 픽업")
     }
 
     private fun answerOrder(said: String) {
         val w = said.replace(" ", "")
         val p = order ?: return
+        if (confirming()) {   // the pay window is open: only a yes pays, a no goes back
+            when {
+                listOf("아니", "취소", "그만", "닫", "돌아", "괜찮", "됐어").any { it in w } -> { payAsk = null; speakThen("결제하지 않았어요. 다른 메뉴나 다른 곳을 말하거나 닫기라고 해 주세요", "confirm"); renderAnswers() }
+                Errands.isPayWord(said) -> payOrder()
+                else -> speakThen("결제, 아니요 중에 말해 주세요", "confirm")
+            }
+            return
+        }
         when {
-            listOf("취소", "그만", "아니", "됐어", "괜찮").any { it in w } -> cancelOrder()
+            listOf("취소", "그만", "아니", "됐어", "괜찮", "닫").any { it in w } -> cancelOrder()
             Errands.itemNamed(p.shop, said) != null && Errands.itemNamed(p.shop, said) != p.item -> {   // "아이스 라떼로": another item of this shop
                 val m = Errands.itemNamed(p.shop, said)!!
                 order = Pick(p.shop, m); orderKey = java.util.UUID.randomUUID().toString()
@@ -1832,7 +1887,7 @@ class MainActivity : AppCompatActivity() {
             listOf("메뉴", "뭐있", "뭐팔", "파는").any { it in w } -> speakThen(Errands.menuSpoken(p.shop), "confirm")
             listOf("단골", "즐겨찾기").any { it in w } -> toggleFavourite(p.shop.brand)
             listOf("다른", "다음", "딴").any { it in w } -> nextShop()
-            listOf("결제", "주문", "네", "응", "좋아", "그래").any { it in w } -> payOrder()
+            Errands.isPayWord(said) -> askPay()
             else -> speakThen("결제, 메뉴, 다른 곳, 단골, 취소 중에 말해 주세요", "confirm")
         }
     }

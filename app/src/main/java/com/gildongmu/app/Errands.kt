@@ -166,6 +166,18 @@ object Errands {
         return shop.menu.firstOrNull { m -> m.name.replace(" ", "").let { n -> w.contains(n.take(3)) || (w.length >= 2 && n.contains(w)) } }
     }
 
+    private val YES = setOf("네", "응", "그래", "좋아", "그래요", "좋아요", "네네", "응응", "맞아", "맞아요", "네맞아요")
+
+    /**
+     * Does this sentence pay? Only a clear "결제"/"주문해"/"사줘", or a bare yes ("네", "응") as the WHOLE answer.
+     * A yes word inside a longer sentence ("네 그건 그렇고 휴게소가...") never pays: with the microphone opening by itself,
+     * passing talk must not be able to buy anything.
+     */
+    fun isPayWord(spoken: String): Boolean {
+        val w = spoken.replace(" ", "").trimEnd('.', '!', '?')
+        return listOf("결제", "주문해", "사줘", "시켜줘").any { it in w } || w in YES
+    }
+
     /** What is said about an order in progress. */
     fun statusSpoken(o: OrderReceipt): String =
         "${o.shop}에 주문한 ${o.item}은 ${o.statusLabel}." + if (!o.finished) " 도착은 ${o.etaMin}분 뒤예요." + (if (o.delayMin > 0) " 막혀서 처음보다 ${o.delayMin}분 늦어졌어요." else "") else ""
