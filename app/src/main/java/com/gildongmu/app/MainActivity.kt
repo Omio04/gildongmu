@@ -1698,7 +1698,7 @@ class MainActivity : AppCompatActivity() {
         }
         val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         if (payToken() == null) row.addView(actionBtn("결제 수단 등록", t.accent, Color.WHITE, 17f) { openPayments() }, LinearLayout.LayoutParams(0, -2, 1.6f))
-        else row.addView(actionBtn("결제하기", t.accent, Color.WHITE, 18f) { askPay() }, LinearLayout.LayoutParams(0, -2, 1.6f))
+        else row.addView(actionBtn("결제하기", t.accent, Color.WHITE, 18f) { payOrder() }, LinearLayout.LayoutParams(0, -2, 1.6f))
         if (alts.size > 1) row.addView(actionBtn("다른 곳", t.surface, t.muted, 16f) { nextShop() }, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
         row.addView(actionBtn("닫기", t.surface, t.muted, 16f) { cancelOrder() }, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
         attentionCard.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
