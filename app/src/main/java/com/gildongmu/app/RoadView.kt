@@ -24,8 +24,8 @@ import kotlin.math.sin
  * coordinates are ever shown.
  *
  * What moves, and why:
- *  - The lane marks stand still when parked or stopped, and when the car moves they ease up to one steady pace (not
- *    tied to the real speed) and ease back to a halt when it stops.
+ *  - The lane marks stand still when parked; otherwise (stopped in D or moving) they ease up to one steady pace (not
+ *    tied to the real speed) and ease back to a halt when the car is parked.
  *  - The cars around us drift a little back and forth, each on its own slow rhythm, the way traffic in a jam
  *    stretches and closes up.
  *  - While a question is out, rings spread from our car; a car that answers glows once and keeps a blue halo.
@@ -68,6 +68,9 @@ class RoadView(
 
     /** Kept so the screen can tell the road about the driving state. */
     var moving: Boolean = false
+
+    /** The lane marks flow: in every state except parked (stopped in D flows like driving, at the same pace). */
+    var flowing: Boolean = false
 
     /** Vehicle speed; the lane marks scroll in proportion (0 = standing still, the road still inches along). */
     var speedKmh: Float = 0f
@@ -178,9 +181,9 @@ class RoadView(
 
         // lane dashes scroll
         val period = 56 * d
-        // parked or stopped in D: the road stands still. Moving (pedal pressed, speed above the limit): it eases up to one steady
-        // pace and stays there, whatever the real speed; stopping eases back to a halt.
-        val target = if (moving) CRUISE_KMH else 0f
+        // parked: the road stands still. In D (stopped or moving) it eases up to one steady pace and stays there, whatever the real
+        // speed; going back to P eases it to a halt.
+        val target = if (flowing) CRUISE_KMH else 0f
         if (running) {
             if (lastFrame != 0L) {
                 val dt = ((now - lastFrame) / 1000f).coerceAtMost(0.1f)
