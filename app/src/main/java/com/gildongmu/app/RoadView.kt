@@ -426,7 +426,7 @@ class RoadView(
     private companion object {
         const val MAX_NEIGHBOUR_BUBBLES = 2   // plus our own: the road stays readable
         const val CRUISE_KMH = 50f            // the one steady pace the road flows at while moving
-        const val CRUISE_PX_PER_SEC = 127f    // the same look as before at 50 km/h
+        const val CRUISE_PX_PER_SEC = 55f     // calm: less than half the old look at 50 km/h
         const val IDLE_KMH = 8f
         const val MAX_CARS = 6               // the road has room for this many; the rest are counted on the chip
         const val RADIUS = 300f              // metres from our car to the top of the road view
