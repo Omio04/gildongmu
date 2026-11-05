@@ -403,7 +403,7 @@ class RoadView(
         val t1 = n.nickname
         val t2 = second ?: ("${n.distanceM}m" + (answer?.let { " · $it" } ?: ""))
         val pad = 8 * d
-        val dotW = 12 * d   // room for the green "uses the app" dot
+        val dotW = 0f   // no status dot on name tags: every car on this road is a real app user, so a dot would say nothing
         val wTxt = maxOf(label.measureText(t1), sub.measureText(t2)) + pad * 2 + dotW
         val hTag = 36 * d
         val r = RectF(cx - wTxt / 2, bottom - hTag, cx + wTxt / 2, bottom)
@@ -415,8 +415,6 @@ class RoadView(
         c.drawRoundRect(r, 11 * d, 11 * d, chipBorder)
         label.color = theme.ink
         sub.color = theme.muted
-        onP.color = theme.parked
-        c.drawCircle(r.left + pad + 3.5f * d, r.top + 12 * d, 3.5f * d, onP)
         c.drawText(t1, r.left + pad + dotW, r.top + 16 * d, label)
         c.drawText(t2, r.left + pad + dotW, r.top + 31 * d, sub)
         return r.top

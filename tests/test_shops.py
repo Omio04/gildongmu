@@ -169,6 +169,18 @@ class ShopsTest(unittest.TestCase):
         done = s.track(o["receipt"], HERE[0] + 0.5, HERE[1])
         self.assertEqual(done["eta_min"], o["eta_min"])
 
+    def test_a_car_sees_its_own_orders_newest_first_with_status_and_refund(self):
+        s = fresh()
+        x = s.near(*HERE)["shops"][0]
+        a = s.order(x["id"], x["menu"][0]["name"], "me", *HERE, payment_token=TOK)
+        b = s.order(x["id"], x["menu"][-1]["name"], "me", *HERE, payment_token=TOK)
+        s.order(x["id"], x["menu"][0]["name"], "someone-else", *HERE, payment_token=TOK)
+        s.cancel(a["receipt"])
+        mine = s.history("me")
+        self.assertEqual([o["receipt"] for o in mine], [b["receipt"], a["receipt"]])   # not the other car's order
+        self.assertEqual((mine[1]["status"], mine[1]["refunded"]), ("cancelled", True))
+        self.assertTrue(mine[0]["live"] and not mine[1]["live"])
+
     def test_orders_and_shops_survive_a_restart(self):
         with tempfile.TemporaryDirectory() as d:
             s = sh.Shops(store=d)

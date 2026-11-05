@@ -236,6 +236,9 @@ class MainActivity : AppCompatActivity() {
 
         // debug builds only: pretend the car is in a given state, to look at that screen without the console
         if ((applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
+            val filter = android.content.IntentFilter("com.gildongmu.app.DEBUG")
+            val rx = object : android.content.BroadcastReceiver() { override fun onReceive(c: android.content.Context?, i: android.content.Intent) { ui.post { debugCommand(i) } } }
+            if (android.os.Build.VERSION.SDK_INT >= 33) registerReceiver(rx, filter, android.content.Context.RECEIVER_EXPORTED) else registerReceiver(rx, filter)
             when (intent.getStringExtra("force_state")) {
                 "moving" -> ui.postDelayed({ forcedInfo = DriveInfo(DriveState.MOVING, true, 0x50, 32f); onDriveInfo(forcedInfo!!) }, 4000)
                 "idling" -> ui.postDelayed({ forcedInfo = DriveInfo(DriveState.IDLING, true, 0x50, 0f); onDriveInfo(forcedInfo!!) }, 4000)
@@ -298,6 +301,34 @@ class MainActivity : AppCompatActivity() {
 
     // while another app is in front there is nobody to show the road to: stop asking the server
     override fun onPause() { polling = false; super.onPause() }
+
+    /**
+     * Debug builds only: the same test options as at start, sent to the running app without restarting it (used to record
+     * the demo video):  adb shell am broadcast -a com.gildongmu.app.DEBUG --es say "a,b" --es force_state moving|idling|parked
+     * --ef fake_lat 37.9 --ef fake_lon 127.5
+     */
+    private fun debugCommand(intent: android.content.Intent) {
+        android.util.Log.i(TAG, "debug command: force_state=${intent.getStringExtra("force_state")} say=${intent.getStringExtra("say")}")
+        intent.getStringExtra("force_state")?.let { st ->
+            val info2 = when (st) {
+                "moving" -> DriveInfo(DriveState.MOVING, true, 0x50, 32f)
+                "idling" -> DriveInfo(DriveState.IDLING, true, 0x50, 0f)
+                "parked" -> DriveInfo(DriveState.PARKED, false, 0, 0f)
+                else -> null
+            }
+            if (info2 != null) { forcedInfo = info2; onDriveInfo(info2) }
+        }
+        if (intent.hasExtra("fake_lat") && intent.hasExtra("fake_lon"))
+            fakePlace = Place(intent.getFloatExtra("fake_lat", 0f).toDouble(), intent.getFloatExtra("fake_lon", 0f).toDouble(), 0.0, "시험 위치")
+        intent.getStringExtra("say")?.split(",")?.forEachIndexed { i, phrase ->
+            ui.postDelayed({ handleHeard(phrase.trim()) }, intent.getIntExtra("say_delay", 0) * 1_000L + i * 4_000L)
+        }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        if ((applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0) debugCommand(intent)
+    }
 
     override fun onResume() {
         super.onResume()
@@ -370,9 +401,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun profileDone() {
+        val first = !getSharedPreferences("gildongmu", MODE_PRIVATE).getBoolean(PROFILE_KEY, false)
         getSharedPreferences("gildongmu", MODE_PRIVATE).edit().putBoolean(PROFILE_KEY, true).apply()
         profileOpen = false
-        renderAnswers()
+        if (first && payMethods().isEmpty() && profileEditable()) openPayments()   // first run: offer the payment method once, right away (can be closed)
+        else renderAnswers()
     }
 
     /** The first-run notice (and, read-only, from the profile): plain words, one short paragraph per thing that is used. */
@@ -579,9 +612,8 @@ class MainActivity : AppCompatActivity() {
         val crowd = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
             background = fill(if (t.night) Color.parseColor("#D90B1424") else Color.parseColor("#F2FFFFFF"))
-            setPadding(dp(14), dp(8), dp(16), dp(8))
+            setPadding(dp(16), dp(8), dp(16), dp(8))
         }
-        crowd.addView(View(this).apply { background = oval(t.parked) }, LinearLayout.LayoutParams(dp(8), dp(8)).apply { rightMargin = dp(8) })
         crowdText = text("주변을 찾는 중…", 15f, t.ink, 2)
         crowd.addView(crowdText)
         frame.addView(crowd, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.START).apply { setMargins(dp(10), 0, 0, dp(10)) })
@@ -989,9 +1021,9 @@ class MainActivity : AppCompatActivity() {
         // the pickup list and the order card need the room: the report banner steps aside while they are open
         // any big card in the top slot (a report, a sentence to confirm, an offer, an order, a picked car, the profile) takes the room of the banner:
         // otherwise the buttons at the bottom are pushed off the screen
-        bannerCard.visibility = if (profileOpen || pendingReport != null || order != null || hazard != null || heardText != null || nudge != null || pickedCar != null) View.GONE else View.VISIBLE
-        answersCard.visibility = if (order != null || profileOpen || hazard != null || heardText != null || nudge != null || pickedCar != null || pendingReport != null) View.GONE else View.VISIBLE   // the order or profile card replaces it: no empty squeezed card under it
-        stoppedArea.visibility = if (info.canSend && !profileOpen) View.VISIBLE else View.GONE   // editing the profile needs the room
+        bannerCard.visibility = if (profileOpen || payOpen || pendingReport != null || order != null || hazard != null || heardText != null || nudge != null || pickedCar != null) View.GONE else View.VISIBLE
+        answersCard.visibility = if (order != null || profileOpen || payOpen || hazard != null || heardText != null || nudge != null || pickedCar != null || pendingReport != null) View.GONE else View.VISIBLE   // the order or profile card replaces it: no empty squeezed card under it
+        stoppedArea.visibility = if (info.canSend && !profileOpen && !payOpen) View.VISIBLE else View.GONE   // editing the profile needs the room
     }
 
     /**
@@ -1087,7 +1119,7 @@ class MainActivity : AppCompatActivity() {
             }, LinearLayout.LayoutParams(0, -2, w).apply { if (row.childCount > 0) leftMargin = dp(10) })
         }
         btn(if (hazardByDriver) "촬영하고 신고" else "신고하기", true, 1.6f) { fileHazard(p) }
-        btn(if (hazardByDriver) "취소" else "괜찮아요", false, 1f) { declineHazard(p) }
+        btn(if (hazardByDriver) "닫기" else "괜찮아요", false, 1f) { declineHazard(p) }
         attentionCard.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
     }
 
@@ -1255,23 +1287,109 @@ class MainActivity : AppCompatActivity() {
     private var shopLoading = false
     private var shopFailed = false
     private var orderKey = ""
-    private fun payToken(): String? = getSharedPreferences("gildongmu", MODE_PRIVATE).getString("pay_token", null)
-    private fun payLast4(): String = getSharedPreferences("gildongmu", MODE_PRIVATE).getString("pay_last4", "1234") ?: "1234"
+    private var payOpen = false                   // the payment-methods and order-history card is open (stopped only)
+    private var payTab = "live"                    // "live" or "done"
+    private var payHistory: List<OrderRow> = emptyList()
+    private var payExpanded: String? = null        // the receipt whose payment detail is open
 
-    /**
-     * MOCK card registration, done once while stopped (a real one is done on the phone or the web with the card company's
-     * screen, and the car only keeps the token it gets back). Here a made-up token is stored: no card number exists anywhere.
-     */
-    private fun registerCard() {
-        val chars = "abcdefghijklmnopqrstuvwxyz0123456789"
-        val tok = "tok_" + (1..12).map { chars.random() }.joinToString("")
-        getSharedPreferences("gildongmu", MODE_PRIVATE).edit().putString("pay_token", tok).putString("pay_last4", "1234").apply()
-        flash("결제 수단을 등록했어요 · 카드 ****1234 (모의)", "결제 수단")
+    private fun prefs() = getSharedPreferences("gildongmu", MODE_PRIVATE)
+
+    private fun payMethods(): List<PayMethod> = try {
+        val arr = org.json.JSONArray(prefs().getString("pay_methods", "[]"))
+        (0 until arr.length()).map { arr.getJSONObject(it).let { o -> PayMethod(o.getString("id"), o.getString("type"), o.optString("last4", ""), o.getString("token")) } }
+    } catch (_: Exception) { emptyList() }
+
+    private fun savePayMethods(list: List<PayMethod>, default: String?) {
+        val arr = org.json.JSONArray()
+        list.forEach { arr.put(org.json.JSONObject().put("id", it.id).put("type", it.type).put("last4", it.last4).put("token", it.token)) }
+        prefs().edit().putString("pay_methods", arr.toString()).putString("pay_default", default ?: list.firstOrNull()?.id).apply()
     }
 
-    private fun removeCard() {
-        getSharedPreferences("gildongmu", MODE_PRIVATE).edit().remove("pay_token").remove("pay_last4").apply()
-        flash("결제 수단을 삭제했어요", "결제 수단")
+    private fun defaultMethod(): PayMethod? = payMethods().let { l -> l.firstOrNull { it.id == prefs().getString("pay_default", null) } ?: l.firstOrNull() }
+    private fun payToken(): String? = defaultMethod()?.token
+    private fun payLabel(): String = defaultMethod()?.label() ?: "없음"
+
+    /**
+     * MOCK registration, done while stopped. A real one is done on the phone or the web with the card company's own screen,
+     * and the car only keeps the token it gets back. Here a made-up token is stored: no card number exists anywhere.
+     */
+    private fun addPayMethod(type: String) {
+        val chars = "abcdefghijklmnopqrstuvwxyz0123456789"
+        val tok = "tok_" + (1..12).map { chars.random() }.joinToString("")
+        val m = PayMethod("m" + (1..6).map { chars.random() }.joinToString(""), type, if (type == "domestic") "1234" else if (type == "overseas") "5678" else "", tok)
+        val list = payMethods() + m
+        savePayMethods(list, prefs().getString("pay_default", null) ?: m.id)
+        renderAnswers()
+    }
+
+    private fun removePayMethod(id: String) {
+        val list = payMethods().filter { it.id != id }
+        val keep = prefs().getString("pay_default", null)?.takeIf { d -> list.any { it.id == d } }
+        savePayMethods(list, keep)
+        renderAnswers()
+    }
+
+    private fun openPayments() {
+        payOpen = true; profileOpen = false; pickedCar = null; pendingReport = null
+        payExpanded = null
+        io.execute {
+            val rows = try { api.myOrders() } catch (_: Exception) { null }
+            ui.post { if (rows != null) payHistory = rows; if (payOpen) renderAnswers() }
+        }
+        renderAnswers()
+    }
+
+    private fun closePayments() { payOpen = false; renderAnswers() }
+
+    /** Payment methods (list, default, delete, add) and the order history with a receipt: the kind of screen ride and order apps have. */
+    private fun renderPayments() {
+        answersCount.text = ""
+        attentionCard.removeAllViews()
+        attentionCard.visibility = View.VISIBLE
+        val top = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        top.addView(text("결제·주문", 20f, t.ink, 2), LinearLayout.LayoutParams(0, -2, 1f))
+        top.addView(profileChip("닫기", false, compact = true) { closePayments() }, LinearLayout.LayoutParams(dp(90), -2))
+        attentionCard.addView(top)
+        attentionCard.addView(text("결제 수단", 13f, t.muted, 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(8) })
+        val methods = payMethods()
+        val def = defaultMethod()
+        if (methods.isEmpty()) attentionCard.addView(text("결제 수단을 등록하면 바로 결제할 수 있어요", 15f, t.ink, 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
+        methods.take(3).forEach { m ->
+            val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+            row.addView(text(m.label(), 15f, t.ink, 2).apply { maxLines = 1 }, LinearLayout.LayoutParams(0, -2, 1f))
+            if (m.id == def?.id) row.addView(text("기본", 13f, Color.WHITE, 2).apply { background = fill(t.accent, 8); setPadding(dp(10), dp(4), dp(10), dp(4)) }, LinearLayout.LayoutParams(-2, -2).apply { rightMargin = dp(6) })
+            else row.addView(profileChip("기본으로", false, compact = true) { savePayMethods(methods, m.id); renderAnswers() }, LinearLayout.LayoutParams(dp(90), -2).apply { rightMargin = dp(6) })
+            row.addView(profileChip("삭제", false, compact = true) { removePayMethod(m.id) }, LinearLayout.LayoutParams(dp(70), -2))
+            attentionCard.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
+        }
+        val add = LinearLayout(this)
+        listOf("easy" to "+ 간편결제", "domestic" to "+ 국내 카드", "overseas" to "+ 해외 카드").forEach { (type, label) ->
+            add.addView(profileChip(label, false, compact = true) { addPayMethod(type) }, LinearLayout.LayoutParams(0, -2, 1f).apply { if (add.childCount > 0) leftMargin = dp(6) })
+        }
+        attentionCard.addView(add, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+        attentionCard.addView(text("카드 번호는 폰·웹의 카드사 화면에서 입력하고 차에는 토큰만 저장돼요 (지금은 모의 등록)", 12f, t.muted), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
+
+        val tabs = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        tabs.addView(text("주문 내역", 13f, t.muted, 1), LinearLayout.LayoutParams(0, -2, 1f))
+        tabs.addView(profileChip("진행 중", payTab == "live", compact = true) { payTab = "live"; payExpanded = null; renderAnswers() }, LinearLayout.LayoutParams(dp(100), -2).apply { rightMargin = dp(6) })
+        tabs.addView(profileChip("완료", payTab == "done", compact = true) { payTab = "done"; payExpanded = null; renderAnswers() }, LinearLayout.LayoutParams(dp(90), -2))
+        attentionCard.addView(tabs, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
+        val rows = payHistory.filter { (payTab == "live") == it.live }.take(2)
+        if (rows.isEmpty()) attentionCard.addView(text(if (payTab == "live") "진행 중인 주문이 없어요" else "완료된 주문이 없어요", 15f, t.muted, 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) })
+        val fmt = SimpleDateFormat("M월 d일 a h:mm", Locale.KOREA)
+        rows.forEach { o ->
+            val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = outline(); setPadding(dp(12), dp(8), dp(12), dp(8)) }
+            box.addView(text("${o.shop} · ${o.item}", 15f, t.ink, 2).apply { maxLines = 1 })
+            box.addView(text("${o.statusLabel} · ${"%,d원".format(o.price)} · ${fmt.format(Date((o.createdAt * 1000).toLong()))}", 13f, t.muted, 1).apply { maxLines = 1 })
+            if (payExpanded == o.receipt) {
+                box.addView(text("결제 상세 · 메뉴 ${"%,d원".format(o.price)} · 할인 0원 · 합계 ${"%,d원".format(o.price)}" + (if (o.refunded) " · 환불됨(모의)" else ""), 13f, t.ink, 1),
+                    LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
+                box.addView(text("${o.payment} · ${o.receipt}", 12f, t.muted), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(1) })
+            }
+            box.setOnClickListener { payExpanded = if (payExpanded == o.receipt) null else o.receipt; renderAnswers() }
+            press(box)
+            attentionCard.addView(box, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
+        }
     }
 
     private var activeOrder: OrderReceipt? = null   // the order being made (paid), followed until it is picked up or cancelled
@@ -1428,12 +1546,12 @@ class MainActivity : AppCompatActivity() {
             gravity = Gravity.CENTER
             if (touchOk() && info.canSend) { setOnClickListener { toggleFavourite(s.brand) }; press(this) }
             contentDescription = if (fav) "단골 해제" else "단골로 등록"
-        }, LinearLayout.LayoutParams(dp(48), dp(40)))
+        }, LinearLayout.LayoutParams(dp(48), dp(48)))
         attentionCard.addView(titleRow, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(3) })
         attentionCard.addView(text("${p.item.name} · ${p.item.priceText()}", 17f, t.ink, 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(3) })
         attentionCard.addView(text("도착 ${s.etaMin}분 뒤 · " + (if (s.cookInMin > 0) "${s.cookInMin}분 뒤 조리 시작" else "바로 조리 시작") + " · ☎ ${s.phone}", 14f, t.muted, 1),
             LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(3) })
-        attentionCard.addView(text(if (payToken() != null) "결제: 등록 카드 ****${payLast4()} (모의 결제) · ${p.item.priceText()}" else "결제 수단이 없어요 · 먼저 등록해 주세요 (정차 중)", 13f, t.muted, 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
+        attentionCard.addView(text(if (payToken() != null) "결제: ${payLabel()} · ${p.item.priceText()}" else "결제 수단을 등록하면 결제할 수 있어요 (정차 중에 등록해요)", 13f, t.muted, 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
         if (s.menu.size > 1 && info.canSend && touchOk()) {   // another item of the same shop: one tap
             val menuRow = LinearLayout(this)
             s.menu.take(3).forEach { m ->
@@ -1451,10 +1569,10 @@ class MainActivity : AppCompatActivity() {
             return
         }
         val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        if (payToken() == null) row.addView(actionBtn("결제 수단 등록(모의)", t.accent, Color.WHITE, 17f) { registerCard(); renderAnswers() }, LinearLayout.LayoutParams(0, -2, 1.6f))
+        if (payToken() == null) row.addView(actionBtn("결제 수단 등록", t.accent, Color.WHITE, 17f) { openPayments() }, LinearLayout.LayoutParams(0, -2, 1.6f))
         else row.addView(actionBtn("결제하기", t.accent, Color.WHITE, 18f) { payOrder() }, LinearLayout.LayoutParams(0, -2, 1.6f))
         if (alts.size > 1) row.addView(actionBtn("다른 곳", t.surface, t.muted, 16f) { nextShop() }, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
-        row.addView(actionBtn("취소", t.surface, t.muted, 16f) { cancelOrder() }, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
+        row.addView(actionBtn("닫기", t.surface, t.muted, 16f) { cancelOrder() }, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
         attentionCard.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
     }
 
@@ -1596,7 +1714,7 @@ class MainActivity : AppCompatActivity() {
             col.addView(text(m.text, 17f, t.ink, 2).apply { maxLines = 2 }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(1) })
             row.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
             row.addView(text("신고", 13f, t.muted, 1).apply {
-                setPadding(dp(14), dp(10), dp(4), dp(10))
+                setPadding(dp(14), dp(14), dp(4), dp(14))
                 setOnClickListener { startReport(m.from) { reason -> reportMessage(m, reason) } }
             })
             answersList.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
@@ -1611,7 +1729,7 @@ class MainActivity : AppCompatActivity() {
             val top = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
             top.addView(text("${q.from} · ${q.age}" + if (q.direct) " · 나에게만" else "", 13f, t.muted, 1), LinearLayout.LayoutParams(0, -2, 1f))
             top.addView(text("신고", 13f, t.muted, 1).apply {   // a strange question: report whoever asked it
-                setPadding(dp(14), dp(6), dp(2), dp(6))
+                setPadding(dp(14), dp(14), dp(2), dp(14))
                 alpha = if (info.canSend) 1f else 0.45f
                 setOnClickListener { startReport(q.from) { reason -> reportQuestion(q, reason) } }
             })
@@ -1655,6 +1773,7 @@ class MainActivity : AppCompatActivity() {
         val becameMoving = newInfo.state == DriveState.MOVING && info.state != DriveState.MOVING
         info = newInfo
         if (profileOpen && !profileEditable()) profileOpen = false   // the car set off while the profile was open: close it
+        if (payOpen && !profileEditable()) payOpen = false           // and the payment card
         trackJam()
         evaluateJam()
         render()
@@ -1927,8 +2046,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun deliver(res: SendResult?, presetCode: String?) {
         when {
-            res == null && presetCode == null -> ui.post { showNote("연결을 확인해 주세요. 지금은 보낼 수 없어요") }
-            res == null -> ui.post { showNote("연결을 확인해 주세요. 지금은 보낼 수 없어요") }
+            res == null && presetCode == null -> ui.post { showNote("연결을 확인하면 보낼 수 있어요") }
+            res == null -> ui.post { showNote("연결을 확인하면 보낼 수 있어요") }
             res.code == 422 -> ui.post { showNote(res.error ?: "잘 못 알아들었어요. 다시 말해 주세요") }
             res.error != null -> ui.post { showNote(res.error) }
         }
@@ -2010,6 +2129,7 @@ class MainActivity : AppCompatActivity() {
             spoken != null -> renderHeard(spoken)
             order != null -> renderOrder(order!!)
             reporting != null -> renderReportReasons(reporting)
+            payOpen -> renderPayments()
             profileOpen -> renderProfile()
             picked != null -> renderPicked(picked)
             hazard != null -> renderHazard(hazard!!)
@@ -2088,7 +2208,7 @@ class MainActivity : AppCompatActivity() {
             row.addView(actionBtn("보내기", t.accent, Color.WHITE) { sendHeard() }, LinearLayout.LayoutParams(0, -2, 1.4f))
             row.addView(actionBtn("다시 말하기", if (t.night) t.surfaceAlt else t.navyFill, Color.WHITE) { retryHeard() },
                 LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
-            row.addView(actionBtn("취소", t.surface, t.muted) { cancelHeard() }, LinearLayout.LayoutParams(0, -2, 0.7f).apply { leftMargin = dp(8) })
+            row.addView(actionBtn("닫기", t.surface, t.muted) { cancelHeard() }, LinearLayout.LayoutParams(0, -2, 0.7f).apply { leftMargin = dp(8) })
             attentionCard.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
         }
     }
@@ -2149,7 +2269,7 @@ class MainActivity : AppCompatActivity() {
         gravity = Gravity.CENTER
         maxLines = 1
         background = if (selected) fill(t.accent, 12) else outline()
-        if (compact) setPadding(dp(4), dp(11), dp(4), dp(11)) else setPadding(dp(14), dp(11), dp(14), dp(11))
+        if (compact) setPadding(dp(4), dp(14), dp(4), dp(14)) else setPadding(dp(14), dp(14), dp(14), dp(14))
         setOnClickListener { action() }
         press(this)
     }
@@ -2168,28 +2288,15 @@ class MainActivity : AppCompatActivity() {
         }, LinearLayout.LayoutParams(dp(56), dp(56)).apply { rightMargin = dp(14) })
         val names = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         names.addView(text(myNick(), 22f, t.ink, 2))
-        names.addView(text(if (myModel.isBlank()) "아직 차를 고르지 않았어요" else if (myShowModel) "$myModel · 이웃에게 보여요" else "$myModel · 나만 알아요", 13f, t.muted),
+        names.addView(text(if (myModel.isBlank()) "아직 차를 고르지 않았어요" else "$myModel · 이웃에게 보여요", 13f, t.muted),
             LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(1) })
         who.addView(names, LinearLayout.LayoutParams(0, -2, 1f))
-        who.addView(actionBtn("다른 이름", t.surface, t.ink, 15f) {
+        who.addView(actionBtn("이름 변경", t.surface, t.ink, 15f) {
             val before = myNick()
             do { myAdj = ADJECTIVES.random(); myAnimal = ANIMALS.random() } while (myNick() == before)   // always a new one
             applyProfile()
         }, LinearLayout.LayoutParams(-2, -2))
         attentionCard.addView(who, lp(6))
-
-        // colour of the avatar
-        attentionCard.addView(text("색", 13f, t.muted, 1), lp(12))
-        val colors = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        COLORS.forEachIndexed { i, hex ->
-            val on = hex == myColor
-            colors.addView(View(this).apply {
-                background = if (on) GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.parseColor(hex)); setStroke(dp(3), t.ink) } else oval(Color.parseColor(hex))
-                setOnClickListener { myColor = hex; applyProfile() }
-                press(this)
-            }, LinearLayout.LayoutParams(dp(34), dp(34)).apply { if (i > 0) leftMargin = dp(12) })
-        }
-        attentionCard.addView(colors, lp(6))
 
         // the Hyundai model: one tap on a chip. All twelve are on screen at once (4 x 3): no sideways scrolling to fight with
         attentionCard.addView(text("나의 차량", 13f, t.muted, 1), lp(12))
@@ -2204,14 +2311,12 @@ class MainActivity : AppCompatActivity() {
 
         // the payment method, set once while stopped: the car keeps only a token (mock here)
         val payRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        payRow.addView(text(if (payToken() != null) "결제 수단 · 카드 ****${payLast4()} (모의)" else "결제 수단 · 아직 없어요", 14f, t.muted, 1), LinearLayout.LayoutParams(0, -2, 1f))
-        payRow.addView(profileChip(if (payToken() != null) "삭제" else "등록(모의)", payToken() == null, compact = true) { if (payToken() != null) removeCard() else registerCard(); renderAnswers() },
-            LinearLayout.LayoutParams(dp(110), -2))
+        payRow.addView(text("결제 수단 · " + (defaultMethod()?.label() ?: "아직 없어요"), 14f, t.muted, 1).apply { maxLines = 1 }, LinearLayout.LayoutParams(0, -2, 1f))
+        payRow.addView(profileChip("결제·주문 내역", payToken() == null, compact = true) { openPayments() }, LinearLayout.LayoutParams(dp(150), -2))
         attentionCard.addView(payRow, lp(10))
 
         // privacy and done
         val foot = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        foot.addView(profileChip(if (myShowModel) "차종 공개 중" else "차종 비공개", myShowModel) { myShowModel = !myShowModel; applyProfile() })
         foot.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
         if (!getSharedPreferences("gildongmu", MODE_PRIVATE).getBoolean(PROFILE_KEY, false))
             foot.addView(actionBtn("건너뛰기", t.surface, t.muted, 16f) { profileDone() }, LinearLayout.LayoutParams(dp(120), -2).apply { rightMargin = dp(8) })
@@ -2296,7 +2401,7 @@ class MainActivity : AppCompatActivity() {
             }
             attentionCard.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
         }
-        attentionCard.addView(actionBtn("취소", t.surface, t.muted, 15f) { pendingReport = null; renderAnswers() },
+        attentionCard.addView(actionBtn("닫기", t.surface, t.muted, 15f) { pendingReport = null; renderAnswers() },
             LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
     }
 

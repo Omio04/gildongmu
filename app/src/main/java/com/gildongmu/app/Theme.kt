@@ -31,7 +31,7 @@ class Theme(val night: Boolean) {
 
     // brand
     val primary = c("#002C5F", "#A8D2FF")       // headings and chips (on dark: a light tint so it stays readable)
-    val accent = c("#0092BE", "#35C4F3")        // Active Blue: the one accent
+    val accent = c("#007DA6", "#35C4F3")        // Active Blue, darkened by day so small text and white-on-blue reach 4.5:1
     val accentSoft = c("#E3F3F9", "#0F2A3D")
     val navyFill = c("#002C5F", "#14243F")      // the main action: navy by day, a lifted navy by night
     val strong = c("#002C5F", "#1D6FD9")
@@ -51,7 +51,7 @@ class Theme(val night: Boolean) {
     val carMe = c("#FFFFFF", "#DCE3EE")          // silver: our own car
     val carSame = c("#00A8E0", "#2DB4F5")
     val carOther = c("#262D38", "#1A212C")     // dark graphite, glossy: the quiet default
-    val carLive = c("#002C5F", "#2796E0")      // a real person: a deep Active Blue, the brand colour, at all times
+    val carLive = c("#1F6FD0", "#2796E0")      // a real person: a deep Active Blue, the brand colour, at all times
     val glow = c("#3300A8E0", "#6635C4F3")
 
     companion object {

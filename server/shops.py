@@ -284,6 +284,17 @@ class Shops:
             self.db.execute("UPDATE orders SET status='cancelled', updated_at=? WHERE id=?", (self.clock(), o["id"]))
         return self._order_view(self._row(receipt))
 
+    def history(self, vehicle, limit=30):
+        """This car's own orders, newest first, with what a receipt screen needs (shop, item, price, status, payment, when)."""
+        rows = self.db.execute("SELECT * FROM orders WHERE vehicle=? ORDER BY id DESC LIMIT ?", (vehicle, limit)).fetchall()
+        out = []
+        for o in rows:
+            v = self._order_view(o)
+            out.append({"receipt": o["receipt"], "shop": v["shop"], "item": v["item"], "price": v["price"], "status": v["status"],
+                        "status_label": v["status_label"], "payment": v["payment"], "refunded": v["refunded"],
+                        "created_at": o["created_at"], "live": v["status"] in LIVE or v["status"] == "ready"})
+        return out
+
     def orders_for(self, shop_id, limit=20):
         """What the shop sees on its own screen: the latest orders, the live arrival time, and what it may do next."""
         rows = self.db.execute("SELECT * FROM orders WHERE shop_id=? ORDER BY id DESC LIMIT ?", (shop_id, limit)).fetchall()

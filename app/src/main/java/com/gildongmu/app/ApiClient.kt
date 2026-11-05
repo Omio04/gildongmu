@@ -123,6 +123,18 @@ class ApiClient(private val base: String = "http://10.0.2.2:8080") {
         return if (code == 200) parseOrder(JSONObject(text)) else null
     }
 
+    /** This car's own orders, newest first. */
+    fun myOrders(): List<OrderRow> {
+        val (code, text) = call("GET", "/api/shops/mine")
+        if (code != 200) return emptyList()
+        val arr = JSONObject(text).getJSONArray("items")
+        return (0 until arr.length()).map {
+            val o = arr.getJSONObject(it)
+            OrderRow(o.getString("receipt"), o.getString("shop"), o.getString("item"), o.getInt("price"), o.getString("status"),
+                o.getString("status_label"), o.optString("payment", ""), o.optBoolean("refunded", false), o.getDouble("created_at"), o.optBoolean("live", false))
+        }
+    }
+
     /** The car cancels an order the shop has not started cooking. */
     fun cancelOrderOnServer(receipt: String): OrderReceipt? {
         val (code, text) = call("POST", "/api/shops/order/cancel", JSONObject().put("receipt", receipt))

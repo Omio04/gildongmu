@@ -32,6 +32,21 @@ data class OrderReceipt(
     val finished get() = status == "picked_up" || status == "cancelled"
 }
 
+/** A payment method kept in the car: only the token a payment provider returned, never a card number (MOCK registration). */
+data class PayMethod(val id: String, val type: String, val last4: String, val token: String) {
+    fun label() = when (type) {
+        "easy" -> "간편결제 (모의)"
+        "domestic" -> "국내 카드 ****$last4 (모의)"
+        else -> "해외 카드 ****$last4 (모의)"
+    }
+}
+
+/** One line of the order history (the receipt screen). */
+data class OrderRow(
+    val receipt: String, val shop: String, val item: String, val price: Int, val status: String, val statusLabel: String,
+    val payment: String, val refunded: Boolean, val createdAt: Double, val live: Boolean,
+)
+
 object Errands {
     val ITEM_KINDS = listOf("음료", "식사", "간식")
     val LABEL = mapOf("음료" to "커피·음료", "식사" to "식사", "간식" to "간식")

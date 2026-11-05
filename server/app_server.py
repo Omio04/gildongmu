@@ -345,6 +345,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, shopbook.near(float(q["lat"]), float(q["lon"]), float(q.get("radius", shopsmod.RANGE_KM))))
             if u.path == "/api/shops/orders":   # what one shop would see on its own screen
                 return self._json(200, {"items": shopbook.orders_for(str(q["shop_id"]))})
+            if u.path == "/api/shops/mine":   # this car's own order history (the receipt screen)
+                return self._json(200, {"items": shopbook.history(ME)})
             if u.path == "/api/shops/order":   # the car asks how its order is going (a fresh position re-computes the arrival)
                 try:
                     lat = float(q["lat"]) if "lat" in q else None
