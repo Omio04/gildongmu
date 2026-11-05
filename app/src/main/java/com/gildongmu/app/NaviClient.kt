@@ -26,6 +26,7 @@ class NaviClient(
     private val onState: (String) -> Unit,
     private val onZone: (ZoneAhead) -> Unit = {},
     private val onTurn: (Turn?) -> Unit = {},
+    private val onWaypoint: (Int?) -> Unit = {},   // minutes along the real route to the first waypoint, or null when there is none
 ) {
     /** The last position the navigation gave us (null until it has one). It may be old: see [fresh]. */
     @Volatile var place: Place? = null
@@ -74,6 +75,11 @@ class NaviClient(
         override fun onRouteCancelled() { onTurn(null) }
         override fun onDestinationArrived(info: ai.pleos.playground.navi.data.DestinationArrivedInfo) { onTurn(null) }
 
+        // the shop added as a waypoint: the navigation says how long the real road to it is
+        override fun onWayPointInfo(list: List<ai.pleos.playground.navi.data.WaypointInfo>) {
+            onWaypoint(list.firstOrNull()?.let { (it.remainTime / 60).coerceAtLeast(1) })
+        }
+        override fun onWaypointChanged(info: ai.pleos.playground.navi.data.WaypointChangedInfo) { try { helper.getWaypointInfo() } catch (_: Exception) {} }
         override fun onDestinationChanged() { helper.getDestinationInfo() }
         override fun onRouteStarted(info: ai.pleos.playground.navi.data.RouteStartInfo) { helper.getDestinationInfo() }
     }
@@ -106,6 +112,22 @@ class NaviClient(
         } catch (e: Exception) { onState("route failed: ${e.message}") }
         return true
     }
+
+    /**
+     * Put a shop on the route as the first waypoint (the car's own navigation does the routing). False when there is no
+     * connection or the platform refuses (this needs pleos.car.permission.NAVI_ROUTE_SEARCH, declared in debug builds only).
+     */
+    fun addWaypoint(lat: Double, lon: Double, name: String): Boolean {
+        if (!ready) return false
+        return try {
+            helper.addWaypoint(ai.pleos.playground.navi.data.RequestWaypointInfo(
+                lat, lon, name, ai.pleos.playground.navi.constants.WaypointIndex.FIRST, "gildongmu", "", "", "gildongmu"))
+            true
+        } catch (e: Exception) { onState("waypoint failed: ${e.message}"); false }
+    }
+
+    /** Ask the navigation again how long the road to the waypoint is. */
+    fun refreshWaypoint() { if (ready) try { helper.getWaypointInfo() } catch (_: Exception) {} }
 
     /** Ask for the next manoeuvre again (its distance counts down as the car moves): called every few seconds. */
     fun refreshTurn() { if (ready) try { helper.getTBTInfo() } catch (_: Exception) {} }

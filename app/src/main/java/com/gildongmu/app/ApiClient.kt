@@ -97,7 +97,8 @@ class ApiClient(private val base: String = "http://10.0.2.2:8080") {
             val m = s.getJSONArray("menu")
             Shop(s.getString("id"), s.getString("name"), s.optString("brand", s.getString("name")), s.getString("place"),
                 s.getDouble("km"), s.getInt("eta_min"), s.getInt("wait_min"), s.getInt("cook_in_min"), s.getString("phone"),
-                (0 until m.length()).map { i -> m.getJSONObject(i).let { x -> MenuItem(x.getString("name"), x.getInt("price"), x.getString("kind"), x.optBoolean("simple", true)) } })
+                (0 until m.length()).map { i -> m.getJSONObject(i).let { x -> MenuItem(x.getString("name"), x.getInt("price"), x.getString("kind"), x.optBoolean("simple", true)) } },
+                s.optDouble("lat", 0.0), s.optDouble("lon", 0.0))
         }
         val n = if (o.isNull("nearest")) null else o.getJSONObject("nearest")
         return ShopsView(o.getDouble("range_km"), shops, n?.getString("name"), n?.optDouble("km", 0.0) ?: 0.0, n?.optString("place"))
@@ -115,11 +116,12 @@ class ApiClient(private val base: String = "http://10.0.2.2:8080") {
     private fun parseOrder(o: JSONObject) = OrderReceipt(
         o.getString("receipt"), o.getString("shop"), o.getString("item"), o.getInt("price"),
         o.getInt("eta_min"), o.getInt("cook_in_min"), o.getString("status"), o.optString("status_label", ""),
-        o.optInt("delay_min", 0), o.optBoolean("car_can_cancel", false), o.optString("payment", ""), o.optString("phone", ""))
+        o.optInt("delay_min", 0), o.optBoolean("car_can_cancel", false), o.optString("payment", ""), o.optString("phone", ""),
+        o.optDouble("shop_lat", 0.0), o.optDouble("shop_lon", 0.0))
 
     /** How the order is going now; the car's position lets the server move the arrival time if the car is held up. */
-    fun trackOrder(receipt: String, lat: Double?, lon: Double?): OrderReceipt? {
-        val pos = if (lat != null && lon != null) "&lat=$lat&lon=$lon" else ""
+    fun trackOrder(receipt: String, lat: Double?, lon: Double?, routeEtaMin: Int? = null): OrderReceipt? {
+        val pos = (if (lat != null && lon != null) "&lat=$lat&lon=$lon" else "") + (if (routeEtaMin != null) "&eta=$routeEtaMin" else "")
         val (code, text) = call("GET", "/api/shops/order?receipt=$receipt$pos")
         return if (code == 200) parseOrder(JSONObject(text)) else null
     }

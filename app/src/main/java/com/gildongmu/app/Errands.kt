@@ -15,7 +15,7 @@ data class MenuItem(val name: String, val price: Int, val kind: String, val simp
 
 data class Shop(
     val id: String, val name: String, val brand: String, val place: String, val km: Double, val etaMin: Int, val waitMin: Int,
-    val cookInMin: Int, val phone: String, val menu: List<MenuItem>,
+    val cookInMin: Int, val phone: String, val menu: List<MenuItem>, val lat: Double = 0.0, val lon: Double = 0.0,
 )
 
 /** What the server answered for the car's position: shops inside the range, and the nearest one of all. */
@@ -28,6 +28,7 @@ data class Pick(val shop: Shop, val item: MenuItem)
 data class OrderReceipt(
     val receipt: String, val shop: String, val item: String, val price: Int, val etaMin: Int, val cookInMin: Int, val status: String,
     val statusLabel: String = "", val delayMin: Int = 0, val carCanCancel: Boolean = false, val payment: String = "", val phone: String = "",
+    val shopLat: Double = 0.0, val shopLon: Double = 0.0,
 ) {
     val finished get() = status == "picked_up" || status == "cancelled"
 }

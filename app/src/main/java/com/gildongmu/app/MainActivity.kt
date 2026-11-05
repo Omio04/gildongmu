@@ -263,7 +263,8 @@ class MainActivity : AppCompatActivity() {
         // the navigation only tells us where we are going (same-destination cars get a star)
         navi = NaviClient(this, { tr -> ui.post { onTrip(tr) } }, { st -> android.util.Log.i(TAG, "navi $st") },
             onZone = { z -> io.execute { try { api.hazardDetected(z.kind, "navi-zone") } catch (_: Exception) {} } },
-            onTurn = { tn -> ui.post { turn = tn; renderTurn() } }).also { it.start() }
+            onTurn = { tn -> ui.post { turn = tn; renderTurn() } },
+            onWaypoint = { m -> ui.post { routeEta = m } }).also { it.start() }
         if (intent.getBooleanExtra("demo_route", false)) {
             var tries = 0
             ui.postDelayed(object : Runnable {
@@ -279,6 +280,7 @@ class MainActivity : AppCompatActivity() {
             override fun run() {
                 if (order == null && note == null && answers.isEmpty() && questions.isEmpty() && roadMessages.isEmpty()) refreshShops()   // the answer redraws the slot
                 trackActiveOrder()
+                maybeOffer()
                 ui.postDelayed(this, 10_000)
             }
         }, 10_000)
@@ -318,6 +320,7 @@ class MainActivity : AppCompatActivity() {
             }
             if (info2 != null) { forcedInfo = info2; onDriveInfo(info2) }
         }
+        if (intent.getBooleanExtra("offer_now", false)) maybeOffer(force = true)
         if (intent.hasExtra("probe_x")) {   // log which views lie under a screen point (to find what swallows a tap)
             val px = intent.getIntExtra("probe_x", 0); val py = intent.getIntExtra("probe_y", 0)
             fun walk(v: View, depth: Int) {
@@ -1286,6 +1289,7 @@ class MainActivity : AppCompatActivity() {
         if (spoken.replace(" ", "").let { "전체" in it && "보" in it } && favourites().isNotEmpty()) { showAllShops = true; renderAnswers(); return }
         activeOrder?.let { o ->   // "주문 취소", "주문 어떻게 됐어?": about the order on its way
             val w = spoken.replace(" ", "")
+            if ("경유지" in w || ("내비" in w && "넣" in w)) { addShopWaypoint(); return }
             if ("주문" in w && listOf("취소", "그만").any { it in w }) { if (o.carCanCancel) cancelActiveOrder() else speak("가게가 조리를 시작해서 취소할 수 없어요"); return }
             if ("주문" in w && listOf("어떻게", "상태", "언제", "됐", "어디").any { it in w }) { speak(Errands.statusSpoken(o)); return }
         }
@@ -1418,6 +1422,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private var kindChooser = false                  // the "what do you need on the way?" window is open
+    private var routeEta: Int? = null                // minutes along the real route to the shop, once it is a waypoint
+    private var activeShop: Shop? = null             // the shop of the order being followed (its position goes to the navigation)
+    private var waypointAdded = false
+    private var lastOfferAt = 0L                     // the car offers by itself at most once in a while
     private var activeOrder: OrderReceipt? = null   // the order being made (paid), followed until it is picked up or cancelled
     private var lastOrderStatus = ""
     private var showAllShops = false                  // favourites are set, but the driver asked to see every shop for now
@@ -1650,6 +1658,8 @@ class MainActivity : AppCompatActivity() {
         if (canTap) line.addView(profileChip("주문 취소", false, compact = true) { cancelActiveOrder() }, LinearLayout.LayoutParams(dp(110), -2))
         answersList.addView(line, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
         val hint = when {
+            waypointAdded -> "내비 경유지에 넣었어요" + (routeEta?.let { " · 길 따라 ${it}분" } ?: "")
+            trip != null && !o.finished && activeShop != null -> "“경유지”라고 말하면 내비 길에 넣어요"
             o.carCanCancel && !canTap -> "“주문 취소”, “주문 어떻게 됐어?”라고 말해 보세요"
             o.status == "cooking" -> "조리 중이라 취소는 전화로 · ☎ ${o.phone}"
             o.status == "ready" -> "도착하면 바로 받으세요"
@@ -1663,7 +1673,8 @@ class MainActivity : AppCompatActivity() {
         val o = activeOrder ?: run { restoreActiveOrder(); return }
         val here = currentPlace() ?: return
         io.execute {
-            val r = try { api.trackOrder(o.receipt, here.lat, here.lon) } catch (_: Exception) { null }
+            if (waypointAdded) navi?.refreshWaypoint()
+            val r = try { api.trackOrder(o.receipt, here.lat, here.lon, if (waypointAdded) routeEta else null) } catch (_: Exception) { null }
             ui.post {
                 if (r == null || activeOrder?.receipt != o.receipt) return@post
                 val changed = r.status != lastOrderStatus
@@ -1702,6 +1713,44 @@ class MainActivity : AppCompatActivity() {
 
     private fun forgetActiveOrder() = getSharedPreferences("gildongmu", MODE_PRIVATE).edit().remove("active_receipt").apply()
 
+    /** The shop becomes a stop on the car's own navigation route: the route, not a straight line, then decides when the shop cooks. */
+    private fun addShopWaypoint() {
+        val o = activeOrder ?: return
+        val shop = activeShop ?: Shop("", o.shop, o.shop, "", 0.0, o.etaMin, 0, o.cookInMin, o.phone, emptyList(), o.shopLat, o.shopLon)   // an order restored after a restart has no Shop: use the order's own data
+        if (shop.lat == 0.0 && shop.lon == 0.0) { speak("가게 위치를 몰라요"); return }
+        if (waypointAdded) { speak("이미 내비 경유지에 있어요"); return }
+        if (trip == null) { speak("내비 안내 중일 때 경유지로 넣을 수 있어요"); return }
+        val ok = navi?.addWaypoint(shop.lat, shop.lon, shop.name) == true
+        if (ok) { waypointAdded = true; speak("${shop.name}을 내비 경유지에 넣었어요"); ui.postDelayed({ navi?.refreshWaypoint() }, 2_500) }
+        else speak("지금은 경유지로 넣을 수 없어요")
+        renderAnswers()
+    }
+
+    /**
+     * What a phone app cannot do: the car offers by itself. When it has been stuck in traffic for a while (or the trip has
+     * 10-25 minutes left) and a shop is ahead, it asks once, by voice, and the answer is one word. Not while anything else
+     * is on screen, never while driving fast, and not again for 20 minutes. Needs a payment method on file (set up while stopped).
+     */
+    private fun maybeOffer(force: Boolean = false) {
+        if (!consented || payToken() == null) return
+        val now = System.currentTimeMillis()
+        if (!force && now - lastOfferAt < 20 * 60_000L) return
+        if (order != null || activeOrder != null || kindChooser || payOpen || profileOpen || hazard != null || heardText != null ||
+            nudge != null || pickedCar != null || pendingReport != null || questions.isNotEmpty()) return
+        val jammed = jamSince?.let { now - it >= 60_000L } == true && info.state != DriveState.MOVING
+        val left = trip?.remainMin
+        val onTheWay = left != null && left in 10..25
+        if (!force && !jammed && !onTheWay) return
+        val v = shopView ?: return
+        val pick = Errands.picks(v, "음료", activeFavs()).firstOrNull() ?: Errands.picks(v, "간식", activeFavs()).firstOrNull() ?: return
+        lastOfferAt = now
+        alts = listOf(pick); altIdx = 0
+        order = pick; orderKey = java.util.UUID.randomUUID().toString()
+        val why = if (jammed) "막혀서 서 있는 동안" else "가는 길에"
+        speakThen("$why ${pick.shop.name}이 ${pick.shop.etaMin}분 거리에 있어요. ${pick.item.name} ${pick.item.priceText()}, 주문할까요? 결제, 괜찮아요 중에 말해 주세요", "confirm")
+        renderAnswers()
+    }
+
     private fun cancelActiveOrder() {
         val o = activeOrder ?: return
         io.execute {
@@ -1735,7 +1784,7 @@ class MainActivity : AppCompatActivity() {
                 if (order !== p) return@post   // cancelled meanwhile
                 if (r == null) { flash("주문을 보내지 못했어요 · 연결을 확인해 주세요", "가는 길 픽업"); return@post }
                 order = null; alts = emptyList()
-                activeOrder = r; lastOrderStatus = r.status
+                activeOrder = r; lastOrderStatus = r.status; activeShop = p.shop; waypointAdded = false; routeEta = null
                 getSharedPreferences("gildongmu", MODE_PRIVATE).edit().putString("active_receipt", r.receipt).apply()   // survives the app being restarted
                 speak("주문했어요. 접수번호 ${r.receipt}. 가게에 알렸어요")
                 flash("${r.shop} · ${r.item} · ${"%,d원".format(r.price)} · 접수번호 ${r.receipt} · " +
@@ -1753,7 +1802,7 @@ class MainActivity : AppCompatActivity() {
         val w = said.replace(" ", "")
         val p = order ?: return
         when {
-            listOf("취소", "그만", "아니", "됐어").any { it in w } -> cancelOrder()
+            listOf("취소", "그만", "아니", "됐어", "괜찮").any { it in w } -> cancelOrder()
             Errands.itemNamed(p.shop, said) != null && Errands.itemNamed(p.shop, said) != p.item -> {   // "아이스 라떼로": another item of this shop
                 val m = Errands.itemNamed(p.shop, said)!!
                 order = Pick(p.shop, m); orderKey = java.util.UUID.randomUUID().toString()

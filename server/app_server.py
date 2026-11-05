@@ -376,7 +376,7 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     lat = float(q["lat"]) if "lat" in q else None
                     lon = float(q["lon"]) if "lon" in q else None
-                    return self._json(200, shopbook.track(str(q["receipt"]), lat, lon))
+                    return self._json(200, shopbook.track(str(q["receipt"]), lat, lon, int(q["eta"]) if q.get("eta", "").isdigit() else None))
                 except shopsmod.ShopError as e:
                     return self._json(404, {"error": str(e)})
             if u.path == "/api/hazard/proposal":   # does the car think it sees something? (the driver decides)

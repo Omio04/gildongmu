@@ -160,6 +160,16 @@ class ShopsTest(unittest.TestCase):
         self.assertGreaterEqual(far["cook_in_min"], o["cook_in_min"])   # cooking is started later, not earlier
         self.assertEqual(s.orders_for(x["id"])[0]["delay_min"], far["delay_min"])
 
+    def test_the_route_time_from_the_cars_navigation_beats_a_straight_line_guess(self):
+        s = fresh()
+        x, o = self._placed(s)
+        v = s.track(o["receipt"], HERE[0], HERE[1], 14)   # the navigation says 14 min along the real road
+        self.assertEqual(v["eta_min"], 14)
+        self.assertEqual(v["delay_min"], 14 - o["eta_min"])
+        guess = s.track(o["receipt"], HERE[0], HERE[1])["eta_min"]   # no route time: back to the straight-line guess
+        self.assertEqual(s.track(o["receipt"], HERE[0], HERE[1], 9999)["eta_min"], guess)   # an absurd route time is ignored
+        self.assertIn("lat", s.near(*HERE)["shops"][0])   # the car needs the shop position to add it as a waypoint
+
     def test_a_finished_order_no_longer_moves_with_the_car(self):
         s = fresh()
         _, o = self._placed(s)

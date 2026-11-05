@@ -201,7 +201,7 @@ class Shops:
 
     def _view(self, r, km):
         eta = eta_min(km)
-        return {"id": r["id"], "name": r["name"], "brand": r["brand"], "place": r["place"], "km": round(km, 2), "eta_min": eta,
+        return {"id": r["id"], "name": r["name"], "brand": r["brand"], "place": r["place"], "lat": r["lat"], "lon": r["lon"], "km": round(km, 2), "eta_min": eta,
                 "wait_min": r["wait_min"], "cook_in_min": max(0, eta - r["wait_min"]), "phone": r["phone"],
                 "menu": self._menu(r["id"])}
 
@@ -263,18 +263,22 @@ class Shops:
         delay = o["eta_min"] - first
         return {"ok": True, "receipt": o["receipt"], "shop": r["name"], "phone": r["phone"], "item": o["item"], "price": o["price"],
                 "eta_min": o["eta_min"], "first_eta_min": first, "delay_min": delay, "cook_in_min": o["cook_in_min"],
+                "shop_lat": self.db.execute("SELECT lat FROM shops WHERE id=?", (o["shop_id"],)).fetchone()["lat"],
+                "shop_lon": self.db.execute("SELECT lon FROM shops WHERE id=?", (o["shop_id"],)).fetchone()["lon"],
                 "status": o["status"], "status_label": STATUS_LABEL.get(o["status"], o["status"]),
                 "refunded": o["status"] == "cancelled" and bool(o["payment_id"]),
                 "payment": o["payment"] or PAYMENT,
                 "start_cooking_now": o["status"] in ("placed", "accepted") and o["cook_in_min"] <= 0,
                 "shop_can": list(SHOP_NEXT.get(o["status"], ())), "car_can_cancel": o["status"] in CAR_CAN_CANCEL}
 
-    def track(self, receipt, lat=None, lon=None):
+    def track(self, receipt, lat=None, lon=None, route_eta=None):
         """The car asks how its order is going. A fresh position re-computes the arrival: stuck in a jam, the shop is told later."""
         o = self._row(receipt)
         if lat is not None and lon is not None and o["status"] in LIVE:
             r = self.db.execute("SELECT * FROM shops WHERE id=?", (o["shop_id"],)).fetchone()
             eta = eta_min(distance_km(lat, lon, r["lat"], r["lon"]))
+            if isinstance(route_eta, int) and 1 <= route_eta <= 240:
+                eta = route_eta   # the car's own navigation knows the route: its time beats a straight-line guess
             with self.db:
                 self.db.execute("UPDATE orders SET eta_min=?, cook_in_min=?, car_lat=?, car_lon=?, updated_at=? WHERE id=?",
                                 (eta, max(0, eta - r["wait_min"]), lat, lon, self.clock(), o["id"]))
