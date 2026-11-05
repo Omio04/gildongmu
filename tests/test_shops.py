@@ -181,6 +181,17 @@ class ShopsTest(unittest.TestCase):
         self.assertEqual((mine[1]["status"], mine[1]["refunded"]), ("cancelled", True))
         self.assertTrue(mine[0]["live"] and not mine[1]["live"])
 
+    def test_moving_north_only_shops_ahead_come_back_and_stopped_shows_all_around(self):
+        s = fresh()
+        south = s.register(shop(name="남쪽 가게", lat=HERE[0] - 0.01, lon=HERE[1]))   # about 1.1 km behind a car heading north
+        moving = [x["name"] for x in s.near(*HERE, heading=0.0)["shops"]]
+        self.assertNotIn("남쪽 가게", moving)
+        self.assertIn("해뜰커피 DT", moving)   # 2 km ahead
+        self.assertIn("남쪽 가게", [x["name"] for x in s.near(*HERE)["shops"]])   # stopped: no heading, everything around
+        heading_south = [x["name"] for x in s.near(*HERE, heading=180.0)["shops"]]
+        self.assertIn("남쪽 가게", heading_south)
+        self.assertNotIn("해뜰커피 DT", heading_south)
+
     def test_orders_and_shops_survive_a_restart(self):
         with tempfile.TemporaryDirectory() as d:
             s = sh.Shops(store=d)

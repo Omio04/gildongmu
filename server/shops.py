@@ -96,6 +96,21 @@ def distance_km(lat1, lon1, lat2, lon2):
     return 2 * 6371.0 * math.asin(math.sqrt(a))
 
 
+def bearing_deg(lat1, lon1, lat2, lon2):
+    """Compass direction from the first point to the second, 0 = north."""
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    d = math.radians(lon2 - lon1)
+    y = math.sin(d) * math.cos(p2)
+    x = math.cos(p1) * math.sin(p2) - math.sin(p1) * math.cos(p2) * math.cos(d)
+    return (math.degrees(math.atan2(y, x)) + 360) % 360
+
+
+def ahead(heading, lat, lon, slat, slon, half_angle=100):
+    """True when a shop lies in front of a car heading [heading] (a wide cone: a bend in the road is not "behind")."""
+    diff = abs((bearing_deg(lat, lon, slat, slon) - heading + 180) % 360 - 180)
+    return diff <= half_angle
+
+
 def eta_min(km):
     """About 50 km/h on average, at least one minute."""
     return max(1, int(km * 1.2 + 0.5))
@@ -190,11 +205,13 @@ class Shops:
                 "wait_min": r["wait_min"], "cook_in_min": max(0, eta - r["wait_min"]), "phone": r["phone"],
                 "menu": self._menu(r["id"])}
 
-    def near(self, lat, lon, radius_km=RANGE_KM):
+    def near(self, lat, lon, radius_km=RANGE_KM, heading=None):
         """Shops inside the range, nearest first, and the nearest shop of all (to say how far "nothing" is)."""
         rows = self.db.execute("SELECT * FROM shops").fetchall()
         measured = sorted(((distance_km(lat, lon, r["lat"], r["lon"]), r) for r in rows), key=lambda x: x[0])
-        inside = [self._view(r, km) for km, r in measured if km <= radius_km][:MAX_SHOPS]
+        # moving (a heading is given): only shops in front; stopped: all around
+        inside = [self._view(r, km) for km, r in measured
+                  if km <= radius_km and (heading is None or km < 0.15 or ahead(heading, lat, lon, r["lat"], r["lon"]))][:MAX_SHOPS]
         nearest = None
         if measured:
             km, r = measured[0]

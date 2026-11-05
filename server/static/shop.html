@@ -81,8 +81,15 @@ async function loadShops() {
 
 const BTN = { accepted: '수락', cooking: '조리 시작', ready: '준비 완료', picked_up: '수령 완료', cancelled: '거절' };
 
+function shopKey(ask) {
+  let k = '';
+  try { k = localStorage.getItem('shop_key') || ''; } catch (e) {}
+  if (!k && ask) { k = prompt('가게 열쇠를 입력해 주세요 (서버를 켠 화면에 나와요)') || ''; try { localStorage.setItem('shop_key', k); } catch (e) {} }
+  return k;
+}
 async function setStatus(receipt, status) {
-  await fetch('/api/shops/order/status', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ receipt, status }) });
+  const r = await fetch('/api/shops/order/status', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Shop-Key': shopKey(true) }, body: JSON.stringify({ receipt, status }) });
+  if (r.status === 401) { try { localStorage.removeItem('shop_key'); } catch (e) {} alert('가게 열쇠가 맞지 않아요'); }
   loadOrders();
 }
 
@@ -114,7 +121,8 @@ $('r_go').addEventListener('click', async () => {
   const body = { name: $('r_name').value, brand: $('r_brand').value || undefined, place: $('r_place').value,
     lat: parseFloat($('r_lat').value), lon: parseFloat($('r_lon').value), phone: $('r_phone').value,
     wait_min: parseInt($('r_wait').value, 10), menu };
-  const r = await fetch('/api/shops/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const r = await fetch('/api/shops/register', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Shop-Key': shopKey(true) }, body: JSON.stringify(body) });
+  if (r.status === 401) { try { localStorage.removeItem('shop_key'); } catch (e) {} }
   const d = await r.json();
   $('r_msg').textContent = r.ok ? '등록됐어요. 차가 5km 안에 오면 앱에 나와요.' : '등록하지 못했어요: ' + (d.error || r.status);
   if (r.ok) { current = d.id; await loadShops(); loadOrders(); }

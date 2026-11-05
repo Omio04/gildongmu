@@ -75,8 +75,32 @@ lock = threading.RLock()  # one shared connection, used from several handler thr
 db = None
 room = live.LiveRoom()
 reports = live.Reports()
+import secrets
+import hmac
+
+
+def _load_shop_key(data_dir):
+    """The key a shop uses to register and to move its orders forward. From GILDONGMU_SHOP_KEY, or made once and kept in the data folder."""
+    k = os.environ.get("GILDONGMU_SHOP_KEY")
+    if k:
+        return k
+    f = pathlib.Path(data_dir) / "shop_key.txt"
+    try:
+        return f.read_text(encoding="utf-8").strip()
+    except OSError:
+        pass
+    k = secrets.token_urlsafe(9)
+    try:
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(k, encoding="utf-8")
+    except OSError:
+        pass
+    return k
+
+
 DATA_DIR = pathlib.Path(os.environ.get("GILDONGMU_DATA") or pathlib.Path(__file__).with_name("data"))   # tickets + photos survive a restart
 PHOTO_DAYS = 30             # photos are the most personal thing kept: deleted after this many days
+SHOP_KEY = _load_shop_key(DATA_DIR)   # shops only: cars need no key
 shopbook = shopsmod.Shops(store=DATA_DIR)   # partner shops (they register themselves) and the pickup orders for them
 hazards = hzmod.Hazards(store=DATA_DIR)   # what the car sees on the road, and the reports the driver confirms
 hazards.purge_old(PHOTO_DAYS)
@@ -342,7 +366,8 @@ class Handler(BaseHTTPRequestHandler):
                                 "auto": r["auto"] == 1, "human": r["auto"] == 2})
                 return self._json(200, out)
             if u.path == "/api/shops":   # the shops near the car's position: distance, arrival, menu
-                return self._json(200, shopbook.near(float(q["lat"]), float(q["lon"]), float(q.get("radius", shopsmod.RANGE_KM))))
+                return self._json(200, shopbook.near(float(q["lat"]), float(q["lon"]), float(q.get("radius", shopsmod.RANGE_KM)),
+                                                     heading=float(q["heading"]) if "heading" in q else None))
             if u.path == "/api/shops/orders":   # what one shop would see on its own screen
                 return self._json(200, {"items": shopbook.orders_for(str(q["shop_id"]))})
             if u.path == "/api/shops/mine":   # this car's own order history (the receipt screen)
@@ -514,7 +539,9 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/hazard/decline":
                 return self._json(200, {"ok": hazards.decline(int(data.get("proposal_id", 0)))})
 
-            if u.path == "/api/shops/register":   # a partner shop sends its own data (test server: no sign-in yet)
+            if u.path in ("/api/shops/register", "/api/shops/order/status") and not hmac.compare_digest(self.headers.get("X-Shop-Key", ""), SHOP_KEY):
+                return self._json(401, {"error": "shop key needed"})   # the shop side is not open to everyone
+            if u.path == "/api/shops/register":   # a partner shop sends its own data (needs the shop key)
                 try:
                     return self._json(200, {"ok": True, "id": shopbook.register(data)})
                 except shopsmod.ShopError as e:
@@ -723,6 +750,7 @@ def main():
     seed()
     ip = lan_ip()
     print(f"gildongmu server on :{port}", flush=True)
+    print(f"shop key (for http://<this PC>:{port}/shop): {SHOP_KEY}", flush=True)
     print(f"neighbour page for phones on the same Wi-Fi:  http://{ip}:{port}/neighbor", flush=True)
     try:  # https twin: same app, so the browser allows the microphone
         cert, key = _make_cert(ip)

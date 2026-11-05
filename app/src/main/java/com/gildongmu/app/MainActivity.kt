@@ -318,6 +318,17 @@ class MainActivity : AppCompatActivity() {
             }
             if (info2 != null) { forcedInfo = info2; onDriveInfo(info2) }
         }
+        if (intent.hasExtra("probe_x")) {   // log which views lie under a screen point (to find what swallows a tap)
+            val px = intent.getIntExtra("probe_x", 0); val py = intent.getIntExtra("probe_y", 0)
+            fun walk(v: View, depth: Int) {
+                val loc = IntArray(2); v.getLocationOnScreen(loc)
+                if (px >= loc[0] && px < loc[0] + v.width && py >= loc[1] && py < loc[1] + v.height && v.visibility == View.VISIBLE) {
+                    android.util.Log.i(TAG, "probe ${"  ".repeat(depth)}${v.javaClass.simpleName} clickable=${v.isClickable} [${loc[0]},${loc[1]} ${v.width}x${v.height}]")
+                    if (v is android.view.ViewGroup) for (i in 0 until v.childCount) walk(v.getChildAt(i), depth + 1)
+                }
+            }
+            walk(window.decorView, 0)
+        }
         if (intent.hasExtra("fake_lat") && intent.hasExtra("fake_lon"))
             fakePlace = Place(intent.getFloatExtra("fake_lat", 0f).toDouble(), intent.getFloatExtra("fake_lon", 0f).toDouble(), 0.0, "시험 위치")
         intent.getStringExtra("say")?.split(",")?.forEachIndexed { i, phrase ->
@@ -512,6 +523,7 @@ class MainActivity : AppCompatActivity() {
             setTextColor(color)
             typeface = when (weight) { 2 -> fBold; 1 -> fSemi; else -> fRegular }
             includeFontPadding = false
+            setLineSpacing(0f, 1.25f)   // a little air between lines: easier to read at a glance (the guides ask 140-160%; cards are tight)
             if (android.os.Build.VERSION.SDK_INT >= 33) {   // keep a Korean phrase together when the line wraps
                 setLineBreakWordStyle(android.graphics.text.LineBreakConfig.LINE_BREAK_WORD_STYLE_PHRASE)
             }
@@ -1335,7 +1347,10 @@ class MainActivity : AppCompatActivity() {
         renderAnswers()
     }
 
+    private var resumeOrder: Pick? = null          // the order card to come back to after a payment method was registered
+
     private fun openPayments() {
+        resumeOrder = order; order = null           // the order card would otherwise cover this screen
         payOpen = true; profileOpen = false; pickedCar = null; pendingReport = null
         payExpanded = null
         io.execute {
@@ -1345,7 +1360,11 @@ class MainActivity : AppCompatActivity() {
         renderAnswers()
     }
 
-    private fun closePayments() { payOpen = false; renderAnswers() }
+    private fun closePayments() {
+        payOpen = false
+        resumeOrder?.let { order = it; resumeOrder = null }   // back to paying, now with a method on file
+        renderAnswers()
+    }
 
     /** Payment methods (list, default, delete, add) and the order history with a receipt: the kind of screen ride and order apps have. */
     private fun renderPayments() {
@@ -1422,7 +1441,7 @@ class MainActivity : AppCompatActivity() {
         if (shopLoading) return
         shopLoading = true
         io.execute {
-            val v = try { api.shopsNear(here.lat, here.lon) } catch (_: Exception) { null }
+            val v = try { api.shopsNear(here.lat, here.lon, if (info.state == DriveState.MOVING) here.heading else null) } catch (_: Exception) { null }
             ui.post {
                 shopLoading = false
                 shopFailed = v == null
@@ -1535,6 +1554,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun openList(key: String) {
         kindChooser = false
+        android.util.Log.i(TAG, "openList $key shopView=${shopView != null} state=${info.state}")
         val v = shopView
         if (v == null) {
             if (currentPlace() == null) {   // no position yet: say so, instead of staying silent
@@ -1621,20 +1641,21 @@ class MainActivity : AppCompatActivity() {
 
     /** The order made, as the slot shows it: where it is, when the car arrives, and a way to cancel while that is still possible. */
     private fun renderTracking(o: OrderReceipt) {
-        answersList.addView(text("${o.shop} · ${o.item}", 17f, t.ink, 2).apply { maxLines = 1 }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
-        answersList.addView(text(o.statusLabel + (if (!o.finished) " · 도착 ${o.etaMin}분 뒤" + (if (o.delayMin > 0) " · 막혀서 +${o.delayMin}분" else "") else ""),
-            16f, t.accent, 2), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
+        answersList.addView(text("${o.shop} · ${o.item}", 16f, t.ink, 2).apply { maxLines = 1 }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
+        // status and the one action on the same line: the card is short
+        val line = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        line.addView(text(o.statusLabel + (if (!o.finished) " · 도착 ${o.etaMin}분 뒤" + (if (o.delayMin > 0) " · 막혀서 +${o.delayMin}분" else "") else ""),
+            15f, t.accent, 2).apply { maxLines = 1 }, LinearLayout.LayoutParams(0, -2, 1f))
         val canTap = o.carCanCancel && touchOk() && info.canSend
-        if (!canTap) answersList.addView(text("접수번호 ${o.receipt} · ${o.payment.ifBlank { "모의 결제" }}", 13f, t.muted, 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(3) })   // the cancel button needs the room
-        if (o.carCanCancel) {
-            if (canTap)
-                answersList.addView(actionBtn("주문 취소 · ${o.receipt}", t.surface, t.muted, 15f) { cancelActiveOrder() }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
-            else answersList.addView(text("“주문 취소”, “주문 어떻게 됐어?”라고 말해 보세요", 13f, t.muted), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) })
-        } else if (o.status == "cooking") {
-            answersList.addView(text("조리 중이라 취소는 전화로 · ☎ ${o.phone}", 13f, t.muted), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
-        } else if (o.status == "ready") {
-            answersList.addView(text("도착하면 바로 받으세요", 13f, t.muted), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
+        if (canTap) line.addView(profileChip("주문 취소", false, compact = true) { cancelActiveOrder() }, LinearLayout.LayoutParams(dp(110), -2))
+        answersList.addView(line, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
+        val hint = when {
+            o.carCanCancel && !canTap -> "“주문 취소”, “주문 어떻게 됐어?”라고 말해 보세요"
+            o.status == "cooking" -> "조리 중이라 취소는 전화로 · ☎ ${o.phone}"
+            o.status == "ready" -> "도착하면 바로 받으세요"
+            else -> "접수번호 ${o.receipt}"
         }
+        answersList.addView(text(hint, 13f, t.muted, 1).apply { maxLines = 1 }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
     }
 
     /** Follow the order made: ask the server how it is going. A change is spoken; a held-up car moves the arrival time later. */
