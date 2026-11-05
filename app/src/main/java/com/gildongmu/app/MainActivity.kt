@@ -71,6 +71,8 @@ class MainActivity : AppCompatActivity() {
     private var hazard: HazardProposal? = null       // "the car sees something: report it?"
     private var hazardToken = 0
     private val gps by lazy { PlatformLocation(this) }
+    private var pleosVehicle: PleosVehicleClient? = null   // Pleos Vehicle SDK: the gear and the brake pedal
+    private var pleosFused: PleosFusedClient? = null       // Pleos FusedLocation SDK: the car's own position (after consent)
     private var hazardByDriver = false
     private var hazardKey = ""                       // our own id for the report on screen: pressing again after a slow answer is not a second report
     private var hazardSeenAt = 0L                    // when the driver saw it (the server also notes when it arrived)
@@ -214,6 +216,7 @@ class MainActivity : AppCompatActivity() {
         if (ContextCompat.checkSelfPermission(this, SPEED_PERMISSION) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, arrayOf(SPEED_PERMISSION), 1)
         }
+        pleosVehicle = PleosVehicleClient(this, { g -> android.util.Log.i(TAG, "pleos gear $g") }, { b -> android.util.Log.i(TAG, "pleos brake $b") }, { android.util.Log.i(TAG, it) }).also { it.start() }
         monitor = DrivingMonitor(this) { newInfo -> ui.post { onDriveInfo(newInfo) } }
         monitor.start()
         render()
@@ -310,12 +313,22 @@ class MainActivity : AppCompatActivity() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.ACCESS_FINE_LOCATION), 4)
         } else gps.start()
+        startFused()   // the car's fused position, first choice (its own permission, asked after the agreement)
         pushProfile()   // the server learns the name and car other cars will see
         polling = true
         pollLoop()
     }
 
     private var introView: View? = null
+
+    private fun startFused() {
+        if (pleosFused != null) return
+        if (ContextCompat.checkSelfPermission(this, FUSED_PERMISSION) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, arrayOf(FUSED_PERMISSION), 5)
+            return
+        }
+        pleosFused = PleosFusedClient(this) { android.util.Log.i(TAG, it) }.also { it.start() }
+    }
 
     /** The first thing a new driver sees: what the app is for, in four short cards. Shown once. */
     private fun showIntro(onDone: () -> Unit) {
@@ -409,6 +422,7 @@ class MainActivity : AppCompatActivity() {
         pollIo.shutdown(); io.shutdown()
         navi?.stop()
         gps.stop()
+        pleosFused?.stop(); pleosVehicle?.stop()
         monitor.stop()
         voice?.stop()
         tts?.shutdown()
@@ -1581,7 +1595,7 @@ class MainActivity : AppCompatActivity() {
 
     // ---------------------------------------------------------------- taking part
 
-    private fun gearCode() = if (info.state == DriveState.PARKED) "P" else "D"
+    private fun gearCode() = pleosVehicle?.gear ?: if (info.state == DriveState.PARKED) "P" else "D"   // the real gear from the Pleos Vehicle SDK when it answers
 
     /**
      * The recogniser's words are shown (and read back) first. Nothing is sent until the driver confirms,
@@ -1793,6 +1807,7 @@ class MainActivity : AppCompatActivity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == 2 && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) voice?.listen()
         if (requestCode == 4 && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) gps.start()
+        if (requestCode == 5 && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED && consented) startFused()
     }
 
     private fun showInbound(m: Inbound) {
@@ -1939,7 +1954,7 @@ class MainActivity : AppCompatActivity() {
     /** Where we are: the navigation's position while it is current, else the platform GPS (null: no position at all). */
     private var fakePlace: Place? = null   // debug builds only: --ef fake_lat / fake_lon, to try the pickup range without a drive
 
-    private fun currentPlace(): Place? = fakePlace ?: navi?.fresh() ?: gps.fresh()
+    private fun currentPlace(): Place? = fakePlace ?: pleosFused?.fresh() ?: navi?.fresh() ?: gps.fresh()
 
     /** Editing the profile only while the car stands still (정차: parked or stopped in traffic), never while moving.
      *  Note for review: the emulator measured the stopped-in-traffic state with the "no setup" flag (0x40) set, the same
@@ -2248,6 +2263,7 @@ class MainActivity : AppCompatActivity() {
         private val COLORS = listOf("#00AAD2", "#12B76A", "#F5A524", "#E5446D", "#7A5AF8", "#2E90FA")
         private val MODELS = listOf("캐스퍼", "아반떼", "쏘나타", "그랜저", "코나", "투싼", "싼타페", "팰리세이드", "스타리아",
             "아이오닉 5", "아이오닉 6", "아이오닉 9")
+        private const val FUSED_PERMISSION = "pleos.car.permission.FUSED_LOCATION"
         private const val INTRO_KEY = "intro_v1"       // the first-run explanation was shown
         private const val PROFILE_KEY = "profile_done"  // the profile was finished or skipped once
         private const val CONSENT_KEY = "consent_v2"   // bump the number when what is collected changes: everyone is asked again

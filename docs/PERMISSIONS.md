@@ -9,6 +9,8 @@ Pleos App Market 접수 양식의 "앱 권한", "개인정보 처리" 항목에 
 |---|---|---|---|
 | `android.car.permission.CAR_SPEED` | 서 있는 차(정체)와 달리는 차를 구분해서 주행 중 제한을 지키려고 | 앱이 켜져 있는 동안 | 속도를 몰라 제한을 보수적으로 적용하지 못함 |
 | `pleos.car.permission.NAVI_ROUTE` | 다음 회전·도착 시각·목적지(조회 전용)를 도로 화면 위에 보여 주려고 | 경로 안내 중 | 안내 줄이 나오지 않음 |
+| `pleos.car.permission.CAR_DRIVE` | Pleos Vehicle SDK로 기어(P/R/N/D)와 브레이크 페달을 읽어 정차·정체 판단에 쓰려고(조회 전용) | 앱이 켜져 있는 동안 | 기어를 몰라 속도·규제 상태만으로 판단 |
+| `pleos.car.permission.FUSED_LOCATION` | Pleos FusedLocation SDK로 차의 융합 위치를 먼저 쓰려고 | **개인정보 동의 후**, 앱이 켜져 있는 동안(시스템이 허용 창을 띄움) | 내비 위치와 GPS로 대신함 |
 | `android.permission.ACCESS_FINE_LOCATION` | 가까운 차와의 거리를 재고 신고한 곳을 남기려고 | **개인정보 동의 후**, 앱이 켜져 있는 동안 | 근처 이웃이 보이지 않음 |
 | `android.permission.CAMERA` | 위험 신고에 붙일 사진 한 장 | 운전자가 낙하물·로드킬 신고를 열었을 때 한 번 찍고, **"촬영하고 신고"를 눌러야** 전송 | 사진 없이 신고됨 |
 | `android.permission.RECORD_AUDIO` | 말로 질문하고 답하려고 | 운전자가 마이크를 눌렀을 때 | 터치로만 사용 |

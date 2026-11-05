@@ -16,6 +16,8 @@
     </queries>
     <!-- navigation destination / remaining time (read-only) -->
     <uses-permission android:name="pleos.car.permission.NAVI_ROUTE" />
+    <uses-permission android:name="pleos.car.permission.CAR_DRIVE" />
+    <uses-permission android:name="pleos.car.permission.FUSED_LOCATION" />
 
     <application
         android:usesCleartextTraffic="true"

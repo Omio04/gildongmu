@@ -45,6 +45,8 @@ android {
 dependencies {
     compileOnly(files("$sdkDir/platforms/android-37.0/optional/android.car.jar"))
     implementation("ai.pleos.playground:NaviHelper:3.0.5")
+    implementation("ai.pleos.playground:Vehicle:2.3.2")          // gear and brake pedal (read only)
+    implementation("ai.pleos.playground:FusedLocation:1.1.3")    // the car's fused position
     implementation(libs.androidx.activity.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.constraintlayout)
