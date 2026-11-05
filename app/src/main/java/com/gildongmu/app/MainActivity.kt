@@ -207,7 +207,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
         voice = VoiceInput(this,
-            onHeard = { spoken -> ui.post { voiceWave.active = false; if (confirmByVoice) answerConfirm(spoken) else if (hazard != null) answerHazard(spoken) else if (order != null) answerOrder(spoken) else if (nudge != null) answerNudge(spoken) else routeSpoken(spoken) } },
+            onHeard = { spoken -> ui.post { voiceWave.active = false; handleHeard(spoken) } },
             onProblem = { msg -> ui.post { voiceWave.active = false; showNote(msg) } },
             onListening = { ui.post { voiceWave.active = true } })
 
@@ -237,6 +237,10 @@ class MainActivity : AppCompatActivity() {
                 "moving" -> ui.postDelayed({ forcedInfo = DriveInfo(DriveState.MOVING, true, 0x50, 32f); onDriveInfo(forcedInfo!!) }, 4000)
                 "idling" -> ui.postDelayed({ forcedInfo = DriveInfo(DriveState.IDLING, true, 0x50, 0f); onDriveInfo(forcedInfo!!) }, 4000)
                 "locked" -> ui.postDelayed({ forcedInfo = DriveInfo(DriveState.MOVING, true, 0x1FF, 32f); onDriveInfo(forcedInfo!!) }, 4000)
+            }
+            // --es say "커피 마시고 싶어,결제": what the recogniser would have heard, one phrase every 4 s (the microphone itself is not exercised)
+            intent.getStringExtra("say")?.split(",")?.forEachIndexed { i, phrase ->
+                ui.postDelayed({ handleHeard(phrase.trim()) }, 12_000L + i * 4_000L)
             }
             if (intent.hasExtra("fake_lat") && intent.hasExtra("fake_lon"))
                 fakePlace = Place(intent.getFloatExtra("fake_lat", 0f).toDouble(), intent.getFloatExtra("fake_lon", 0f).toDouble(), 0.0, "시험 위치")
@@ -1184,7 +1188,38 @@ class MainActivity : AppCompatActivity() {
     // ---------------------------------------------------------------- pickup on the way (sample data)
 
     /** A spoken sentence: a pickup request if it names a kind of place, otherwise the normal "this is what I heard" flow. */
+    /** Whatever was heard goes to whoever is waiting for an answer: a confirmation, a hazard, an order, an offer, or a new request. */
+    private fun handleHeard(spoken: String) {
+        if (confirmByVoice) answerConfirm(spoken)
+        else if (hazard != null) answerHazard(spoken)
+        else if (order != null) answerOrder(spoken)
+        else if (nudge != null) answerNudge(spoken)
+        else routeSpoken(spoken)
+    }
+
+    /** Settings by voice are allowed while driving (touching them is not): "내 차는 아반떼", "이름 바꿔 줘". */
+    private fun voiceProfile(spoken: String): Boolean {
+        val w = spoken.replace(" ", "")
+        val model = MODELS.firstOrNull { w.contains(it.replace(" ", "")) }
+        if (model != null && (w.contains("내차") || w.contains("차종") || w.contains("차는") || w.contains("차로"))) {
+            myModel = model; applyProfile()
+            speak("내 차를 $model(으)로 바꿨어요")
+            flash("내 차 · $model", "프로필")
+            return true
+        }
+        if (w.contains("이름") && (w.contains("바꿔") || w.contains("다른") || w.contains("새로"))) {
+            val before = myNick()
+            do { myAdj = ADJECTIVES.random(); myAnimal = ANIMALS.random() } while (myNick() == before)
+            applyProfile()
+            speak("이름을 ${myNick()}(으)로 바꿨어요")
+            flash("이름 · ${myNick()}", "프로필")
+            return true
+        }
+        return false
+    }
+
     private fun routeSpoken(spoken: String) {
+        if (voiceProfile(spoken)) return
         if (spoken.replace(" ", "").let { "전체" in it && "보" in it } && favourites().isNotEmpty()) { showAllShops = true; renderAnswers(); return }
         val type = Errands.matchType(spoken)
         if (type != null) openList(type) else propose(spoken)

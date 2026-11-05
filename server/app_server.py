@@ -294,6 +294,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._file("neighbor.html", "text/html; charset=utf-8")
         if u.path in ("/ask", "/ask/"):   # voice test page: no app needed
             return self._file("ask.html", "text/html; charset=utf-8")
+        if u.path in ("/shop", "/shop/"):   # the shop's own screen: orders from cars appear here
+            return self._file("shop.html", "text/html; charset=utf-8")
         if u.path == "/manifest.webmanifest":
             return self._file("manifest.webmanifest", "application/manifest+json; charset=utf-8")
         if u.path == "/connect":   # open on the phone: install the app, then tap the button to point it at this server
