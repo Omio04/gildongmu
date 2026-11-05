@@ -470,6 +470,7 @@ class MainActivity : AppCompatActivity() {
         pollIo.shutdown(); io.shutdown()
         navi?.stop()
         gps.stop()
+        shopCache.clear()
         pleosFused?.stop(); pleosVehicle?.stop()
         monitor.stop()
         voice?.stop()
@@ -1299,12 +1300,14 @@ class MainActivity : AppCompatActivity() {
             Errands.kindFromWord(spoken)?.let { openList(it); return }
             speakThen("커피나 음료, 식사, 간식 중에 말해 주세요", "confirm"); return
         }
+        shopView?.let { v -> Errands.shopFor(v, spoken)?.let { openShopListing(it); return } }
         val type = Errands.matchType(spoken)
         if (type == "ALL") openKindChooser() else if (type != null) openList(type) else propose(spoken)
     }
 
     private fun touchOk() = info.state != DriveState.MOVING
 
+    private val shopCache = ShopCache()             // shops held now: in at 5 km, deleted beyond 6 km, memory only
     private var shopView: ShopsView? = null          // what the server last said is near the car
     private var shopLoading = false
     private var shopFailed = false
@@ -1449,9 +1452,15 @@ class MainActivity : AppCompatActivity() {
         if (shopLoading) return
         shopLoading = true
         io.execute {
-            val v = try { api.shopsNear(here.lat, here.lon, if (info.state == DriveState.MOVING) here.heading else null) } catch (_: Exception) { null }
+            val raw = try { api.shopsNear(here.lat, here.lon, if (info.state == DriveState.MOVING) here.heading else null, Errands.KEEP_KM) } catch (_: Exception) { null }
             ui.post {
                 shopLoading = false
+                val v = raw?.let { r ->
+                    val ch = shopCache.update(r)   // who came into range, who was deleted
+                    if (ch.entered.isNotEmpty() || ch.left.isNotEmpty())
+                        android.util.Log.i(TAG, "shops in: ${ch.entered.joinToString { it.name }} · deleted: ${ch.left.joinToString { it.name }}")
+                    shopCache.asView(r)
+                }
                 shopFailed = v == null
                 if (v != null) shopView = v
                 if (v == null) { if (thenOpen != null) flash("가까운 가게를 불러올 수 없어요 · 연결을 확인해 주세요", "가는 길 픽업"); return@post }
@@ -1584,6 +1593,16 @@ class MainActivity : AppCompatActivity() {
         }
         alts = list; altIdx = 0
         openOrder(list[0])
+    }
+
+    /** "근처 해뜰커피 알려줘" / "근처 주유소에 파는 거 알려줘": the shop opens, and what it sells is read out. Price and payment follow by voice. */
+    private fun openShopListing(shop: Shop) {
+        pickedCar = null; profileOpen = false; payOpen = false; pendingReport = null; kindChooser = false
+        val first = shop.menu.firstOrNull { it.simple } ?: shop.menu.firstOrNull() ?: return
+        alts = listOf(Pick(shop, first)); altIdx = 0
+        order = Pick(shop, first); orderKey = java.util.UUID.randomUUID().toString()
+        speakThen(Errands.sellingSpoken(shop), "confirm")
+        renderAnswers()
     }
 
     private fun nextShop() {
@@ -1806,10 +1825,11 @@ class MainActivity : AppCompatActivity() {
             Errands.itemNamed(p.shop, said) != null && Errands.itemNamed(p.shop, said) != p.item -> {   // "아이스 라떼로": another item of this shop
                 val m = Errands.itemNamed(p.shop, said)!!
                 order = Pick(p.shop, m); orderKey = java.util.UUID.randomUUID().toString()
-                speakThen("${m.name} ${m.priceText()}으로 바꿨어요. 결제할까요?", "confirm")
+                speakThen(if (listOf("얼마", "가격", "몇원").any { it in w }) "${m.name} ${m.priceText()}이에요. 결제할까요?" else "${m.name} ${m.priceText()}으로 바꿨어요. 결제할까요?", "confirm")
                 renderAnswers()
             }
-            listOf("메뉴", "뭐있", "가격", "얼마").any { it in w } -> speakThen(Errands.menuSpoken(p.shop), "confirm")
+            listOf("얼마", "가격", "몇원").any { it in w } -> speakThen("${p.item.name} ${p.item.priceText()}이에요. 결제할까요?", "confirm")
+            listOf("메뉴", "뭐있", "뭐팔", "파는").any { it in w } -> speakThen(Errands.menuSpoken(p.shop), "confirm")
             listOf("단골", "즐겨찾기").any { it in w } -> toggleFavourite(p.shop.brand)
             listOf("다른", "다음", "딴").any { it in w } -> nextShop()
             listOf("결제", "주문", "네", "응", "좋아", "그래").any { it in w } -> payOrder()

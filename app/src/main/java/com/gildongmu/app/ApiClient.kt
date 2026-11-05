@@ -86,8 +86,8 @@ class ApiClient(private val base: String = "http://10.0.2.2:8080") {
     }
 
     /** The partner shops near this position, as they registered themselves (inside the server's range). */
-    fun shopsNear(lat: Double, lon: Double, heading: Double? = null): ShopsView {
-        val h = if (heading != null) "&heading=$heading" else ""   // only while moving: then only shops in front are offered
+    fun shopsNear(lat: Double, lon: Double, heading: Double? = null, radiusKm: Double? = null): ShopsView {
+        val h = (if (heading != null) "&heading=$heading" else "") + (if (radiusKm != null) "&radius=$radiusKm" else "")   // heading only while moving
         val (code, body) = call("GET", "/api/shops?lat=$lat&lon=$lon$h")
         if (code != 200) throw java.io.IOException("shops $code")
         val o = JSONObject(body)

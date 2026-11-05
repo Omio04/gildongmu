@@ -48,7 +48,35 @@ data class OrderRow(
     val payment: String, val refunded: Boolean, val createdAt: Double, val live: Boolean,
 )
 
+/**
+ * The shops this car holds right now, and only those. A shop's data arrives when the car comes within [ENTER_KM] of it and is
+ * deleted when the car is farther than [KEEP_KM] (the gap stops a shop at the edge from flickering in and out). Kept in memory
+ * only: nothing about shops is written to disk, and the cache is empty again when the app closes.
+ */
+class ShopCache(private val enterKm: Double = Errands.RANGE_KM, private val keepKm: Double = Errands.KEEP_KM) {
+    private val byId = LinkedHashMap<String, Shop>()
+    data class Change(val entered: List<Shop>, val left: List<Shop>)
+
+    /** [view] holds what the server sent within [keepKm]. Returns who came into range and who was deleted. */
+    fun update(view: ShopsView): Change {
+        val seen = view.shops.associateBy { it.id }
+        val entered = mutableListOf<Shop>(); val left = mutableListOf<Shop>()
+        for ((id, old) in byId.toMap()) {
+            val now = seen[id]
+            if (now == null || now.km > keepKm) { byId.remove(id); left += old } else byId[id] = now   // refreshed (distance, arrival)
+        }
+        for (s in view.shops) if (s.id !in byId && s.km <= enterKm) { byId[s.id] = s; entered += s }
+        return Change(entered, left)
+    }
+
+    fun clear() = byId.clear()
+    fun size() = byId.size
+    fun asView(from: ShopsView) = from.copy(rangeKm = enterKm, shops = byId.values.sortedBy { it.km })
+}
+
 object Errands {
+    const val RANGE_KM = 5.0   // a shop's data comes in at this distance
+    const val KEEP_KM = 6.0    // and is deleted beyond this one
     val ITEM_KINDS = listOf("음료", "식사", "간식")
     val LABEL = mapOf("음료" to "커피·음료", "식사" to "식사", "간식" to "간식")
 
@@ -92,6 +120,29 @@ object Errands {
             else -> null
         }
     }
+
+    private val SELL_WORDS = listOf("파는", "팔아", "팔고", "판매", "알려", "있어", "뭐있", "메뉴", "얼마")
+    private val PLACE_WORDS = listOf("주유소" to "편의점·주유", "편의점" to "편의점·주유", "휴게소" to "휴게소", "졸음쉼터" to "휴게소", "드라이브스루" to "드라이브스루")
+
+    /**
+     * "근처 해뜰커피 알려줘", "근처 주유소에 파는 거 알려줘": the nearest shop the sentence names, by its name or brand (two letters
+     * are enough) or by its kind of place. Needs a word that asks ("알려", "파는", "있어"...), so chatter that merely contains a
+     * shop's name is not taken for a request. Questions about parking or jams are never shop requests.
+     */
+    fun shopFor(view: ShopsView, spoken: String): Shop? {
+        val w = spoken.replace(" ", "")
+        if (NOT_PICKUP.any { it in w } || SELL_WORDS.none { it in w }) return null
+        val byName = view.shops.filter { s ->
+            listOf(s.name, s.brand).any { n -> val k = n.replace(" ", ""); k.length >= 2 && (w.contains(k.take(2)) || w.contains(k)) }
+        }.minByOrNull { it.km }
+        if (byName != null) return byName
+        val place = PLACE_WORDS.firstOrNull { it.first in w }?.second ?: return null
+        return view.shops.filter { it.place == place }.minByOrNull { it.km }
+    }
+
+    /** What the shop sells, read aloud: "초록주유소 편의점에서는 생수, 샌드위치, 초코바를 팔아요". */
+    fun sellingSpoken(s: Shop): String =
+        "${s.name}에서는 " + s.menu.joinToString(", ") { it.name } + "를 팔아요. ${"%.1f".format(s.km)}킬로 거리예요. 얼마인지 물어보거나, 결제라고 말해 주세요"
 
     /** The answer to "무엇이 필요하세요?": one word is enough. */
     fun kindFromWord(spoken: String): String? {
