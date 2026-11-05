@@ -73,12 +73,12 @@ python server/app_server.py 8080
 ### 2) 앱
 Pleos Connect 에뮬레이터(API 34)에 설치합니다.
 ```
-adb install -r "apk/개인_길동무_release.apk"
+adb install -r "apk/이정준_길동무_release.apk"
 adb shell am start -n com.gildongmu.app/.MainActivity
 ```
 첫 실행에는 **기능 소개 → 개인정보 안내(동의) → 프로필 설정(이름·색·차종, 건너뛰기 가능)** 순서로 나오고, 동의하기 전에는 위치·서버 연결을 시작하지 않습니다(차량 속도 권한 창만 그보다 먼저 뜹니다). Android Studio에서 열어서 실행해도 됩니다(`local.properties`에 `sdk.dir` 필요).
 
-**테스트 환경:** Pleos Connect 에뮬레이터(Android 14, API 34), Android Studio의 JDK 17 이상, Gradle 8 이상, 서버는 Python 3.12. APK 위치는 `apk/개인_길동무_release.apk`입니다. 필요한 퍼미션은 `docs/PERMISSIONS.md`에 있습니다.
+**테스트 환경:** Pleos Connect 에뮬레이터(Android 14, API 34), Android Studio의 JDK 17 이상, Gradle 8 이상, 서버는 Python 3.12. APK 위치는 `apk/이정준_길동무_release.apk`입니다. 필요한 퍼미션은 `docs/PERMISSIONS.md`에 있습니다.
 
 **컴퓨터 두 대로 이웃 시험:** 한 대에서 서버를 켜고(방화벽 8080 허용), 다른 컴퓨터의 에뮬레이터에서 `adb shell am start --user 10 -n com.gildongmu.app/.MainActivity --es server http://<서버 PC 주소>:8080`로 시작합니다. 주소는 기억됩니다. 서버가 시험용이라 같은 와이파이 안에서만 쓰세요. **이 방법으로 두 대를 실제로 시험해 보지는 못했습니다.**
 
