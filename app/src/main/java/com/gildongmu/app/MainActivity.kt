@@ -2561,15 +2561,36 @@ class MainActivity : AppCompatActivity() {
         whoText.addView(text(where + dest, 14f, t.muted), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(1) })
         who.addView(whoText)
         attentionCard.addView(who, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) })
-        // one thing to do (ask this car: the mic opens at once), and two small ways out
-        attentionCard.addView(actionBtn("이 차에 물어보기", t.accent, Color.WHITE, 20f) { askPicked(car) }, LinearLayout.LayoutParams(-1, dp(64)).apply { topMargin = dp(14) })
+        // stopped: the usual questions are one tap each (sent to this car only); the mic is the other way; driving: this card cannot open, voice only
+        attentionCard.addView(text("무엇이 궁금하세요?", 14f, t.muted, 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(12) })
+        CAR_QUESTIONS.chunked(2).forEach { pair ->
+            val qrow = LinearLayout(this)
+            pair.forEachIndexed { i, q ->
+                qrow.addView(actionBtn(q, t.surface, t.ink, 17f) { askCarNow(car, q) }, LinearLayout.LayoutParams(0, -2, 1f).apply { if (i > 0) leftMargin = dp(8) })
+            }
+            attentionCard.addView(qrow, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+        }
         val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        row.addView(actionBtn("신고", t.surface, t.muted, 15f) { startReport(car.nickname, car.id) { reason -> reportPicked(car, reason) } }, LinearLayout.LayoutParams(0, -2, 1f))
-        row.addView(actionBtn("닫기", t.surface, t.muted, 15f) { pickedCar = null; renderAnswers() }, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
-        attentionCard.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+        row.addView(actionBtn("말로 묻기", t.accent, Color.WHITE, 17f) { askPicked(car) }, LinearLayout.LayoutParams(0, -2, 1.6f))
+        row.addView(actionBtn("신고", t.surface, t.muted, 15f) { startReport(car.nickname, car.id) { reason -> reportPicked(car, reason) } }, LinearLayout.LayoutParams(0, -2, 0.8f).apply { leftMargin = dp(8) })
+        row.addView(actionBtn("닫기", t.surface, t.muted, 15f) { pickedCar = null; renderAnswers() }, LinearLayout.LayoutParams(0, -2, 0.8f).apply { leftMargin = dp(8) })
+        attentionCard.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
     }
 
-    /** "이 차에 물어보기": the driver now says the question out loud; it is read back before it goes to this car only. */
+    private val CAR_QUESTIONS = listOf("왜 막혀요?", "사고 났나요?", "얼마나 더 막혀요?", "다른 길이 나을까요?")
+
+    /** A ready-made question, one tap: it goes to this car only, as if said out loud and confirmed. */
+    private fun askCarNow(car: Neighbor, q: String) {
+        pickedCar = null
+        sayBubble(q)
+        flash("${car.nickname}에게 물어봤어요", "내 질문")
+        io.execute {
+            val res = try { api.ask(q, car.id) } catch (e: Exception) { null }
+            deliver(res, "ASK")
+        }
+    }
+
+    /** "말로 묻기" on a picked car: the driver now says the question out loud; it is read back before it goes to this car only. */
     private fun askPicked(car: Neighbor) {
         askCar = car
         askCarAt = System.currentTimeMillis()
