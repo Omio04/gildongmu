@@ -98,9 +98,9 @@ class RoadView(
     private val chipBorder = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1f * d; color = theme.border }
     private val bubbleFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = theme.surface }
     private val bubbleEdge = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1.5f * d; color = theme.accent }
-    private val bubbleText = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 12 * d; typeface = bold; color = theme.ink }
-    private val label = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 13 * d; typeface = bold; color = theme.ink }
-    private val sub = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 11 * d; typeface = regular; color = theme.muted }
+    private val bubbleText = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 15 * d; typeface = bold; color = theme.ink }
+    private val label = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 16 * d; typeface = bold; color = theme.ink }
+    private val sub = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 14 * d; typeface = regular; color = theme.muted }
     private val ringFill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val onP = Paint(Paint.ANTI_ALIAS_FLAG)
     private val onRing = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 2f * d }

@@ -26,8 +26,8 @@ class Theme(val night: Boolean) {
 
     // text
     val ink = c("#0B1B33", "#E6ECF5")
-    val muted = c("#56667D", "#8696AD")
-    val faint = c("#9AA5B5", "#516078")
+    val muted = c("#3F4E64", "#B7C5D9")   // darker by day, lighter by night: small grey text must still read at a glance
+    val faint = c("#6B7A90", "#8696AD")
 
     // brand
     val primary = c("#002C5F", "#A8D2FF")       // headings and chips (on dark: a light tint so it stays readable)

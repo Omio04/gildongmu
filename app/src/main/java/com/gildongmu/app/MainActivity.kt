@@ -14,9 +14,11 @@ import android.speech.tts.TextToSpeech
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.PopupWindow
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -385,11 +387,17 @@ class MainActivity : AppCompatActivity() {
 
     private fun oval(color: Int) = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(color) }
 
-    /** weight: 0 regular, 1 semibold, 2 bold. Sizes used: 12 meta, 15 body, 18 label, 22 title. */
+    /**
+     * Small text is enlarged for a driver's glance: 12sp becomes 15, 14 becomes 17, 18 becomes 20; titles from 24sp up
+     * are unchanged. The curve is monotonic, so the order of sizes in the design stays the same.
+     */
+    private fun legible(sp: Float) = sp * (1f + 0.25f * maxOf(0f, 24f - sp) / 12f)
+
+    /** weight: 0 regular, 1 semibold, 2 bold. Sizes used: 12 meta, 15 body, 18 label, 22 title (before [legible]). */
     private fun text(s: String, sp: Float, color: Int = t.ink, weight: Int = 0) =
         TextView(this).apply {
             text = s
-            textSize = sp
+            textSize = legible(sp)
             setTextColor(color)
             typeface = when (weight) { 2 -> fBold; 1 -> fSemi; else -> fRegular }
             includeFontPadding = false
@@ -645,6 +653,7 @@ class MainActivity : AppCompatActivity() {
         lift(voiceBar)
         press(voiceBar)
         voiceBar.addView(icon(R.drawable.ic_mic, 24, t.accent), LinearLayout.LayoutParams(dp(24), dp(24)))
+        voiceBar.addView(text("말로 묻기", 13f, t.accent, 2), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })   // says what it is: free speech, not the fixed question
         voiceWave = WaveView(this, t.accent)
         voiceBar.addView(voiceWave, LinearLayout.LayoutParams(dp(30), dp(8)).apply { topMargin = dp(5) })
         ctaRow.addView(voiceBar, LinearLayout.LayoutParams(dp(92), -1).apply { leftMargin = dp(10) })
@@ -798,7 +807,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun renderHeader() {
         if (online) { liveChip.visibility = View.GONE; return }
-        liveChip.text = "● 연결 끊김"
+        liveChip.text = "● 끊김"   // short: the header is already full
         liveChip.visibility = View.VISIBLE
 
     }
@@ -1131,7 +1140,7 @@ class MainActivity : AppCompatActivity() {
         Errands.TYPES.forEach { type ->
             row.addView(text(type, 13f, t.ink, 2).apply {
                 gravity = Gravity.CENTER
-                maxLines = 1
+                maxLines = 2
                 background = outline()
                 setPadding(dp(2), dp(14), dp(2), dp(14))
                 alpha = if (touchOk()) 1f else 0.5f
@@ -1502,16 +1511,51 @@ class MainActivity : AppCompatActivity() {
         ui.postDelayed({ if (note == msg) { note = null; renderAnswers() } }, ms)
     }
 
-    /** Tap the grade chip in the header: grade, points and the next step, shown briefly in the card. */
+    private var standingPopup: PopupWindow? = null
+
+    /**
+     * Tap the grade chip in the header: a small popover right under it, like the tier pop-ups of other apps.
+     * Grade and points, a progress bar to the next grade, the four steps, and how points are earned.
+     * It takes no room on the screen and closes with a tap anywhere else.
+     */
     private fun showStanding() {
+        standingPopup?.let { if (it.isShowing) { it.dismiss(); return } }
         val me = board.me
         val steps = GRADE_STEPS
         val idx = steps.indexOfLast { me.points >= it.first }.coerceAtLeast(0)
+        val floor = steps[idx].first
         val next = steps.getOrNull(idx + 1)
-        val line = "${me.grade} · ${me.points}점 · " +
-            (if (next != null) "‘${next.second}’까지 ${next.first - me.points}점" else "가장 높은 등급") +
-            " · 올린 제보 ${me.posts}건"
-        flash(line, "내 기록", 6_000)
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = GradientDrawable().apply { setColor(t.surface); cornerRadius = dp(16).toFloat(); setStroke(dp(1), t.border) }
+            setPadding(dp(18), dp(16), dp(18), dp(16))
+            elevation = dp(10).toFloat()
+        }
+        val top = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        top.addView(text(me.grade, 20f, t.ink, 2), LinearLayout.LayoutParams(0, -2, 1f))
+        top.addView(text("${me.points}점", 20f, t.accent, 2))
+        box.addView(top)
+        val fraction = if (next == null) 1f else ((me.points - floor).toFloat() / (next.first - floor)).coerceIn(0.04f, 1f)
+        val bar = LinearLayout(this).apply { background = fill(t.surfaceAlt, 5) }
+        bar.addView(View(this).apply { background = fill(t.accent, 5) }, LinearLayout.LayoutParams(0, -1, fraction))
+        bar.addView(View(this), LinearLayout.LayoutParams(0, -1, 1f - fraction + 0.0001f))
+        box.addView(bar, LinearLayout.LayoutParams(-1, dp(10)).apply { topMargin = dp(12) })
+        box.addView(text(if (next != null) "다음 등급 ‘${next.second}’까지 ${next.first - me.points}점" else "가장 높은 등급이에요", 15f, t.ink, 1),
+            LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(10) })
+        val ladder = LinearLayout(this)
+        steps.forEachIndexed { i, s ->
+            ladder.addView(text(s.second.removePrefix("길 위 "), 13f, if (i <= idx) t.accent else t.muted, if (i == idx) 2 else 0).apply { gravity = Gravity.CENTER },
+                LinearLayout.LayoutParams(0, -2, 1f))
+        }
+        box.addView(ladder, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+        box.addView(text("올린 제보 ${me.posts}건 · 이웃이 “도움이 됐어요”를 누르면 올라요", 13f, t.muted),
+            LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(10) })
+        val w = dp(360)
+        standingPopup = PopupWindow(box, w, ViewGroup.LayoutParams.WRAP_CONTENT, true).apply {
+            isOutsideTouchable = true
+            setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
+            showAsDropDown(pointsChip, pointsChip.width - w, dp(8))
+        }
     }
 
     /** "알리기": tell the road what you see, without being asked. */
