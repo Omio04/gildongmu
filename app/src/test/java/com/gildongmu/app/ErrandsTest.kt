@@ -126,4 +126,11 @@ class ErrandsTest {
         for (no in listOf("네 그건 그렇고 휴게소가 어디야", "아니 그건 좋아 보이는데", "응 엄마 지금 가는 중이야", "오늘 날씨 좋아서 그래", "안녕하세요", ""))
             assertTrue(no, !Errands.isPayWord(no))
     }
+
+    @Test
+    fun `saying order-and-pay opens the question, and a named thing goes straight to its kind`() {
+        assertEquals("ALL", Errands.matchType("음성으로 주문 결제"))
+        assertEquals("ALL", Errands.matchType("주문할래"))
+        assertEquals("음료", Errands.matchType("커피 주변 결제까지 할 수 있는 곳 알려줘"))
+    }
 }

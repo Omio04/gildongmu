@@ -108,6 +108,7 @@ object Errands {
     fun matchType(spoken: String): String? {
         val w = spoken.replace(" ", "")
         if (NOT_PICKUP.any { it in w }) return null
+        if (kindFromWord(spoken) == null && listOf("음성주문", "주문결제", "주문할래", "주문할게", "주문하고", "주문하려").any { it in w }) return "ALL"   // "음성으로 주문 결제": the question "무엇을 주문하시겠어요?" opens
         if (ASK.none { it.replace(" ", "") in w }) return null
         return when {
             listOf("커피", "음료", "마실", "차가운", "시원한").any { it in w } -> "음료"

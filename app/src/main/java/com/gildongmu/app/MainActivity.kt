@@ -1552,7 +1552,7 @@ class MainActivity : AppCompatActivity() {
         }
         pickedCar = null; profileOpen = false; payOpen = false; pendingReport = null; order = null
         kindChooser = true
-        speakThen("${v.rangeKm.toInt()}킬로 안에서 " + kinds.joinToString(", ") { Errands.label(it) } + " 받을 수 있어요. 무엇이 필요하세요?", "confirm")
+        speakThen("무엇을 주문하시겠어요? " + kinds.joinToString(", ") { Errands.label(it) } + " 중에 말하거나 가게 이름을 말해 주세요", "confirm")
         renderAnswers()
     }
 
@@ -1561,7 +1561,7 @@ class MainActivity : AppCompatActivity() {
         answersCount.text = ""
         attentionCard.removeAllViews()
         attentionCard.visibility = View.VISIBLE
-        attentionCard.addView(text("가는 길에 무엇이 필요하세요?", 20f, t.ink, 2), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
+        attentionCard.addView(text("무엇을 주문하시겠어요?", 20f, t.ink, 2), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
         attentionCard.addView(text(if (listening) "듣고 있어요 · 가게 이름이나 “커피”처럼 말해 보세요" else "말해 보세요 · 예: “근처 스타벅스” “커피”", 14f, if (listening) t.accent else t.muted, if (listening) 2 else 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
         val kinds = if (v == null) emptyList() else Errands.kindsIn(v, activeFavs())
         val row = LinearLayout(this)
