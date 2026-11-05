@@ -1529,7 +1529,6 @@ class MainActivity : AppCompatActivity() {
         // one button, not one per shop kind: touching it starts the same talk the home mic starts
         answersList.addView(text("${km}km 안 제휴 가게(샘플)", 13f, t.muted, 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
         answersList.addView(actionBtn("음성으로 주문·결제", t.accent, Color.WHITE, 18f) { openKindChooser() }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
-        answersList.addView(text("가게 이름이나 메뉴를 말해 보세요 · 예: “근처 스타벅스 알려줘”", 13f, t.muted, 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) })
         if (favourites().isNotEmpty()) {   // the driver has favourites: say which view this is, and let them switch
             answersList.addView(text(if (showAllShops) "전체 가게를 보는 중 · ★ 단골만 보기" else "★ 단골 가게만 보는 중 · 전체 보기", 14f, t.accent, 1).apply {
                 setPadding(0, dp(8), dp(8), dp(4))
