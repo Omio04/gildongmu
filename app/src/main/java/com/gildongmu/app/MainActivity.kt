@@ -138,6 +138,9 @@ class MainActivity : AppCompatActivity() {
 
     // what the recogniser heard, held back until the driver says it is right (never sent unconfirmed)
     private var heardText: String? = null
+    private var order: Shop? = null                // a (sample) pickup waiting for the driver to pay or cancel
+    private var pickPlaces: List<Shop> = emptyList()   // the places listed for the kind the driver asked for
+    private var pickType = ""
     private var confirmByVoice = false   // true while we wait for "보내"/"다시"/"취소" said out loud
 
     // views
@@ -200,7 +203,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
         voice = VoiceInput(this,
-            onHeard = { spoken -> ui.post { voiceWave.active = false; if (confirmByVoice) answerConfirm(spoken) else if (hazard != null) answerHazard(spoken) else if (nudge != null) answerNudge(spoken) else propose(spoken) } },
+            onHeard = { spoken -> ui.post { voiceWave.active = false; if (confirmByVoice) answerConfirm(spoken) else if (hazard != null) answerHazard(spoken) else if (order != null) answerOrder(spoken) else if (pickPlaces.isNotEmpty()) answerPick(spoken) else if (nudge != null) answerNudge(spoken) else routeSpoken(spoken) } },
             onProblem = { msg -> ui.post { voiceWave.active = false; showNote(msg) } },
             onListening = { ui.post { voiceWave.active = true } })
 
@@ -549,6 +552,7 @@ class MainActivity : AppCompatActivity() {
         pointsChip = text("", 13f, t.primary, 2).apply {
             background = glass(radius = 10)
             setPadding(dp(12), dp(7), dp(12), dp(7))
+            setOnClickListener { showStanding() }
         }
         head.addView(pointsChip, LinearLayout.LayoutParams(-2, -2).apply { rightMargin = dp(8) })
         // only ever shown when something is wrong: the connection is gone
@@ -893,7 +897,8 @@ class MainActivity : AppCompatActivity() {
         if (!::stoppedArea.isInitialized || !::bannerCard.isInitialized) return
         // Answers never take over the screen: they appear in the card at the bottom, and the controls stay where they are.
         // The tall cards (my profile, the report reasons) take the board's place so that nothing is pushed off the screen.
-        bannerCard.visibility = if (profileOpen || pendingReport != null) View.GONE else View.VISIBLE
+        // the pickup list and the order card need the room: the report banner steps aside while they are open
+        bannerCard.visibility = if (profileOpen || pendingReport != null || order != null || pickPlaces.isNotEmpty()) View.GONE else View.VISIBLE
         stoppedArea.visibility = if (info.canSend && !profileOpen) View.VISIBLE else View.GONE   // editing the profile needs the room
     }
 
@@ -1107,27 +1112,124 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** Nothing to read: show how the driver is doing: grade, points, and how far the next grade is. */
-    private fun renderStanding() {
-        val me = board.me
-        val steps = GRADE_STEPS
-        val idx = steps.indexOfLast { me.points >= it.first }.coerceAtLeast(0)
-        val floor = steps[idx].first
-        val next = steps.getOrNull(idx + 1)
-        val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        row.addView(text(me.grade, 22f, t.ink, 2), LinearLayout.LayoutParams(0, -2, 1f))
-        row.addView(text("${me.points}점", 22f, t.accent, 2))
+    // ---------------------------------------------------------------- pickup on the way (sample data)
+
+    /** A spoken sentence: a pickup request if it names a kind of place, otherwise the normal "this is what I heard" flow. */
+    private fun routeSpoken(spoken: String) {
+        val type = Errands.matchType(spoken)
+        if (type != null) openList(type) else propose(spoken)
+    }
+
+    private fun touchOk() = info.state != DriveState.MOVING
+
+    /** The idle slot: one chip per kind of place. Touch only when stopped; while moving, the driver asks aloud. */
+    private fun renderErrands() {
+        if (order != null || pickPlaces.isNotEmpty()) return
+        answersList.addView(text(if (touchOk()) "가는 길에 받을 수 있는 곳을 골라 보세요" else "말로 물어보세요: “앞에 드라이브스루 뭐 있어?”", 13f, t.muted, 1),
+            LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
+        val row = LinearLayout(this)
+        Errands.TYPES.forEach { type ->
+            row.addView(text(type, 13f, t.ink, 2).apply {
+                gravity = Gravity.CENTER
+                maxLines = 1
+                background = outline()
+                setPadding(dp(2), dp(14), dp(2), dp(14))
+                alpha = if (touchOk()) 1f else 0.5f
+                if (touchOk()) { setOnClickListener { openList(type) }; press(this) }
+            }, LinearLayout.LayoutParams(0, -2, 1f).apply { if (row.childCount > 0) leftMargin = dp(6) })
+        }
         answersList.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
-        val fraction = if (next == null) 1f else ((me.points - floor).toFloat() / (next.first - floor)).coerceIn(0.04f, 1f)
-        val bar = LinearLayout(this).apply { background = fill(t.surfaceAlt, 4) }
-        bar.addView(View(this).apply { background = fill(t.accent, 4) }, LinearLayout.LayoutParams(0, -1, fraction))
-        bar.addView(View(this), LinearLayout.LayoutParams(0, -1, 1f - fraction + 0.0001f))
-        answersList.addView(bar, LinearLayout.LayoutParams(-1, dp(8)).apply { topMargin = dp(10) })
-        answersList.addView(text(
-            if (next != null) "다음 등급 ‘${next.second}’까지 ${next.first - me.points}점" else "가장 높은 등급이에요",
-            14f, t.muted, 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(8) })
-        answersList.addView(text("이웃이 “도움이 됐어요”를 누르면 점수가 올라요 · 올린 제보 ${me.posts}건", 13f, t.muted),
-            LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(4) })
+    }
+
+    private fun openList(type: String) {
+        val list = Errands.near(type)
+        pickedCar = null; profileOpen = false; pendingReport = null; order = null
+        if (list.isEmpty()) { pickPlaces = emptyList(); flash("가는 길에 ${type}이 없어요", "가는 길 픽업"); return }
+        pickType = type; pickPlaces = list
+        if (!info.canSend || !touchOk())
+            speakThen("${type} ${list.size}곳 있어요. " + list.joinToString(". ") { "${it.name} ${"%.1f".format(it.km)}킬로" } + ". 어디로 할까요?", "confirm")
+        renderAnswers()
+    }
+
+    /** Candidates, big: name on the left, distance / arrival / waiting on the right. */
+    private fun renderPickList() {
+        answersCount.text = ""
+        attentionCard.removeAllViews()
+        attentionCard.visibility = View.VISIBLE
+        attentionCard.addView(text("$pickType · 가는 길 ${pickPlaces.size}곳 (샘플)", 13f, t.muted, 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(8) })
+        val canTap = info.canSend && touchOk()
+        pickPlaces.forEach { p ->
+            val row = LinearLayout(this).apply {
+                gravity = Gravity.CENTER_VERTICAL
+                background = outline()
+                setPadding(dp(12), dp(11), dp(12), dp(11))
+                if (canTap) { setOnClickListener { openOrder(p) }; press(this) }
+            }
+            row.addView(text(p.name, 16f, t.ink, 2).apply { maxLines = 1 }, LinearLayout.LayoutParams(0, -2, 1f))
+            row.addView(text("${"%.1f".format(p.km)}km · 도착 ${p.etaMin()}분 · 대기 ${p.waitMin}분", 12f, t.muted))
+            attentionCard.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
+        }
+        if (canTap) attentionCard.addView(actionBtn("닫기", t.surface, t.muted, 15f) { closePick() }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
+        else attentionCard.addView(text("가게 이름이나 “첫 번째”라고 말해 주세요", 13f, t.muted), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) })
+    }
+
+    private fun closePick() { pickPlaces = emptyList(); renderAnswers() }
+
+    private fun answerPick(said: String) {
+        val w = said.replace(" ", "")
+        if (listOf("취소", "그만", "됐어", "닫").any { it in w }) { closePick(); return }
+        val p = Errands.pick(pickPlaces, said)
+        if (p != null) openOrder(p) else speakThen("가게 이름이나 첫 번째, 두 번째라고 말해 주세요", "confirm")
+    }
+
+    private fun openOrder(p: Shop) {
+        order = p; pickPlaces = emptyList()
+        if (!info.canSend || !touchOk())
+            speakThen("${p.name} 인기 메뉴는 ${p.item}, ${p.priceText()}. ${p.etaMin()}분 뒤 도착이라 맞춰 준비해요. 결제할까요?", "confirm")
+        renderAnswers()
+    }
+
+    /** One look: what, where, how much, when it will be ready. The payment is a mock: nothing is charged. */
+    private fun renderOrder(p: Shop) {
+        answersCount.text = ""
+        attentionCard.removeAllViews()
+        attentionCard.visibility = View.VISIBLE
+        attentionCard.addView(text("샘플 매장 · 시험용이라 실제 결제는 되지 않아요", 13f, t.muted, 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(8) })
+        attentionCard.addView(text("${p.name} · ${p.item}", 20f, t.ink, 2), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(3) })
+        val cook = p.cookInMin()
+        attentionCard.addView(text("${p.priceText()} · 도착 ${p.etaMin()}분 뒤 · " + (if (cook > 0) "${cook}분 뒤 조리 시작" else "바로 조리 시작"), 15f, t.muted, 1),
+            LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(3) })
+        if (!info.canSend || !touchOk()) {
+            attentionCard.addView(text("“결제”라고 말하면 주문해요", 13f, t.muted), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) })
+            return
+        }
+        val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        row.addView(actionBtn("결제하기", t.accent, Color.WHITE, 18f) { payOrder() }, LinearLayout.LayoutParams(0, -2, 1.6f))
+        row.addView(actionBtn("취소", t.surface, t.muted, 18f) { cancelOrder() }, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
+        attentionCard.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
+    }
+
+    private fun payOrder() {
+        val p = order ?: return
+        order = null
+        val no = Errands.receiptNo()
+        val cook = p.cookInMin()
+        speak("주문했어요. 접수번호 $no")
+        flash("${p.name} · ${p.item} · ${p.priceText()} · 접수번호 $no · " + (if (cook > 0) "${cook}분 뒤 조리 시작 예정" else "바로 조리 시작") + " · 시험용, 실제 결제 없음", "주문 접수", 8_000)
+    }
+
+    private fun cancelOrder() {
+        order = null
+        flash("주문을 취소했어요", "가는 길 픽업")
+    }
+
+    private fun answerOrder(said: String) {
+        val w = said.replace(" ", "")
+        when {
+            listOf("취소", "그만", "아니", "됐어").any { it in w } -> cancelOrder()
+            listOf("결제", "주문", "네", "응", "좋아", "그래").any { it in w } -> payOrder()
+            else -> speakThen("결제 또는 취소라고 말해 주세요", "confirm")
+        }
     }
 
     /** The question card: who asked, the sentence, and the quickest ways to answer. */
@@ -1147,7 +1249,7 @@ class MainActivity : AppCompatActivity() {
         }
         val shown = questions.take(1)   // one question, with its buttons in full; the rest is a count, not a clipped second card
         if (shown.isEmpty()) {
-            if (roadMessages.isEmpty()) renderStanding()
+            if (roadMessages.isEmpty()) renderErrands()
             return
         }
         shown.forEach { q ->
@@ -1303,7 +1405,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun listenForConfirm() {
-        if ((heardText != null && confirmByVoice) || nudge != null || hazard != null) voice?.listen()
+        if ((heardText != null && confirmByVoice) || nudge != null || hazard != null || order != null || pickPlaces.isNotEmpty()) voice?.listen()
     }
 
     private fun answerConfirm(said: String) {
@@ -1393,11 +1495,23 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** A short line in the card that clears itself: for confirmations that need no action. */
-    private fun flash(msg: String, title: String = "도로 소식") {
+    private fun flash(msg: String, title: String = "도로 소식", ms: Long = 3_500) {
         answersTitle = title
         note = msg
         renderAnswers()
-        ui.postDelayed({ if (note == msg) { note = null; renderAnswers() } }, 3_500)
+        ui.postDelayed({ if (note == msg) { note = null; renderAnswers() } }, ms)
+    }
+
+    /** Tap the grade chip in the header: grade, points and the next step, shown briefly in the card. */
+    private fun showStanding() {
+        val me = board.me
+        val steps = GRADE_STEPS
+        val idx = steps.indexOfLast { me.points >= it.first }.coerceAtLeast(0)
+        val next = steps.getOrNull(idx + 1)
+        val line = "${me.grade} · ${me.points}점 · " +
+            (if (next != null) "‘${next.second}’까지 ${next.first - me.points}점" else "가장 높은 등급") +
+            " · 올린 제보 ${me.posts}건"
+        flash(line, "내 기록", 6_000)
     }
 
     /** "알리기": tell the road what you see, without being asked. */
@@ -1487,7 +1601,7 @@ class MainActivity : AppCompatActivity() {
         if (!::answersList.isInitialized) return
         applyFocus()
         val quiet = answers.isEmpty() && note == null && roadMessages.isEmpty() && questions.isEmpty()
-        answersHeader.text = if (quiet) "내 기록" else if (answers.isEmpty() && note == null) "도로 소식" else answersTitle
+        answersHeader.text = if (quiet) "가는 길 픽업" else if (answers.isEmpty() && note == null) "도로 소식" else answersTitle
         val causes = answers.map { it.tag }.filter { it.isNotBlank() }.groupingBy { it }.eachCount()
         val top = causes.maxByOrNull { it.value }
         answersCount.text = when {
@@ -1504,6 +1618,8 @@ class MainActivity : AppCompatActivity() {
         val reporting = pendingReport
         when {
             spoken != null -> renderHeard(spoken)
+            order != null -> renderOrder(order!!)
+            pickPlaces.isNotEmpty() -> renderPickList()
             reporting != null -> renderReportReasons(reporting)
             profileOpen -> renderProfile()
             picked != null -> renderPicked(picked)
