@@ -1,0 +1,8 @@
+<resources>
+    <!-- a light theme on cream: the screens draw their own colours (see Look.kt); this only sets what shows before them -->
+    <style name="Theme.DrivePet" parent="Theme.Material3.Light.NoActionBar">
+        <item name="android:windowBackground">#FFF9F1</item>
+        <item name="colorPrimary">#6686E2</item>
+        <item name="colorAccent">#6686E2</item>
+    </style>
+</resources>

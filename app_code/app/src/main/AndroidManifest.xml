@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Pleos Vehicle SDK, read only. Nothing is ever set on the car. -->
+    <uses-permission android:name="pleos.car.permission.CAR_DRIVE" />   <!-- brake pedal, steering angle, gear -->
+    <uses-permission android:name="pleos.car.permission.CAR_LIGHTS" />  <!-- turn signal -->
+    <uses-permission android:name="pleos.car.permission.CAR_ENERGY" />  <!-- fuel percent, battery charge, charge port: tells when the car is being refuelled / charged -->
+    <uses-permission android:name="pleos.car.permission.NAVI_ROUTE" />  <!-- route: next turn, remaining distance and time (read only) -->
+    <!-- keeps the pet running in the background, and shows it small over other screens -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- which 시·도 the car is in, for the map collection. Only the region is kept, never the route or the position. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="@string/app_name"
+        android:theme="@style/Theme.DrivePet">
+
+        <service
+            android:name=".PetService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse|location">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="floating driving pet that reacts to driving signals while other screens are on top" />
+        </service>
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:screenOrientation="landscape">
+
+            <!-- the pet only shows glanceable info and one short spoken line while driving;
+                 chat is locked until the gear is P -->
+            <meta-data
+                android:name="distractionOptimized"
+                android:value="true" />
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

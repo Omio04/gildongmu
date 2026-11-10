@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- the notification icon: the bear's face (white on transparent, as the system wants) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M2.6,6.6a2.9,2.9 0,1 1,5.8 0a2.9,2.9 0,1 1,-5.8 0z M15.6,6.6a2.9,2.9 0,1 1,5.8 0a2.9,2.9 0,1 1,-5.8 0z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M3,13.4a9,7.6 0,1 1,18 0a9,7.6 0,1 1,-18 0z M7.6,12.4a1.15,1.15 0,1 1,2.3 0a1.15,1.15 0,1 1,-2.3 0z M14.1,12.4a1.15,1.15 0,1 1,2.3 0a1.15,1.15 0,1 1,-2.3 0z M10,15.2q2,2.2 4,0q-2,1.1 -4,0z" />
+</vector>
