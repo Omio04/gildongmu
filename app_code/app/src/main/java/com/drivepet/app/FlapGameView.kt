@@ -99,6 +99,8 @@ class FlapGameView(context: Context, private val onExit: () -> Unit, private val
     }
 
     private companion object {
+        /** the places on the road signs: a trip round the whole country (all 17 regions), starting from Seoul */
+        val TRIP = listOf("서울", "인천", "경기", "강원", "충북", "세종", "대전", "충남", "전북", "광주", "전남", "제주", "경남", "부산", "울산", "대구", "경북")
         const val WORLD_H = 575f
         // the car bitmap covers this box around the car's centre (game units)
         const val CAR_L = -76f; const val CAR_T = -63f; const val CAR_R = 78f; const val CAR_B = 52f
@@ -135,7 +137,7 @@ class FlapGameView(context: Context, private val onExit: () -> Unit, private val
         }
 
         // obstacles: a road sign hanging from above, and a building rising from the ground
-        for ((i, p) in g.pipes.withIndex()) {
+        for (p in g.pipes) {
             val topEnd = p.gapY - FlapGame.GAP / 2f
             val botStart = p.gapY + FlapGame.GAP / 2f
             val sx = p.x; val sw = FlapGame.PIPE_W
@@ -154,14 +156,16 @@ class FlapGameView(context: Context, private val onExit: () -> Unit, private val
             rect.set(sx - 12f, 6f, sx + sw + 12f, 64f); ink.line.color = Look.WHITE; ink.line.strokeWidth = 2.6f; cv.drawRoundRect(rect, 10f, 10f, ink.line)
             cv.restore()
             txt.color = Look.WHITE; txt.textSize = 25f; txt.textAlign = Paint.Align.CENTER
-            cv.drawText(if (i % 2 == 0) "→ 서울" else "← 부산", sx + sw / 2f, topEnd - 25f, txt)
+            // the signs go round the whole country, one place after another, so every region shows up on the way
+            val place = TRIP[p.n % TRIP.size]
+            cv.drawText(if (p.n % 2 == 0) "→ $place" else "$place ←", sx + sw / 2f, topEnd - 25f, txt)
             // building: pastel body with a cocoa line, a roof cap and lit windows
             cv.save(); cv.translate(sx, 0f)
             rect.set(-4f, botStart, sw + 4f, groundTop + 4f)
-            ink.fill.color = OPAQUE; ink.fill.shader = towerShaders[i % 2]; cv.drawRoundRect(rect, 8f, 8f, ink.fill); ink.fill.shader = null
+            ink.fill.color = OPAQUE; ink.fill.shader = towerShaders[p.n % 2]; cv.drawRoundRect(rect, 8f, 8f, ink.fill); ink.fill.shader = null
             ink.line.color = Look.COCOA; ink.line.strokeWidth = 2f; cv.drawRoundRect(rect, 8f, 8f, ink.line)
             rect.set(-10f, botStart - 14f, sw + 10f, botStart + 2f)
-            ink.fill.color = if (i % 2 == 0) 0xFFD9825A.toInt() else 0xFF6F86C8.toInt(); cv.drawRoundRect(rect, 7f, 7f, ink.fill); cv.drawRoundRect(rect, 7f, 7f, ink.line)
+            ink.fill.color = if (p.n % 2 == 0) 0xFFD9825A.toInt() else 0xFF6F86C8.toInt(); cv.drawRoundRect(rect, 7f, 7f, ink.fill); cv.drawRoundRect(rect, 7f, 7f, ink.line)
             var wy = botStart + 18f
             ink.line.color = 0x8C4A3426.toInt(); ink.line.strokeWidth = 1.2f
             while (wy + 20f < groundTop - 8f) {

@@ -217,12 +217,17 @@ object PetHub {
     // ---------------------------------------------------------------- shop and inventory
 
     fun buy(id: String): Boolean {
-        if (!wardrobe.buy(id, engine::spend)) return false
+        if (!wardrobe.buy(id, engine::spend, engine.level)) return false
         save(); tickListeners.forEach { it() }
         return true
     }
 
-    fun equip(id: String) { if (wardrobe.equip(id)) { save(); tickListeners.forEach { it() } } }
+    fun equip(id: String) {
+        // an egg and a baby cannot wear trousers
+        val st = engine.snapshot().stage
+        if (Catalog.get(id)?.slot == Slot.PANTS && (st == GrowthStage.EGG || st == GrowthStage.INFANT)) return
+        if (wardrobe.equip(id)) { save(); tickListeners.forEach { it() } }
+    }
     fun unequipItem(id: String) { wardrobe.unequipItem(id); save(); tickListeners.forEach { it() } }
 
     /** mini game: points for the coins of one run (capped per day). Returns what was given. */
@@ -272,7 +277,7 @@ object PetHub {
 
     /** demo only (for the design captures): own every item, then wear exactly [ids] */
     fun demoOutfit(ids: List<String>, unlockAll: Boolean = true) {
-        if (unlockAll) Catalog.items.forEach { wardrobe.buy(it.id) { true } }
+        if (unlockAll) Catalog.items.forEach { wardrobe.buy(it.id, { true }) }
         wardrobe.clearWorn()
         ids.forEach { wardrobe.equip(it) }
         save(); tickListeners.forEach { it() }
@@ -386,7 +391,11 @@ object PetHub {
     }
 
     private fun onReaction(r: Reaction) {
-        if (engine.driving || r.kind == Kind.TRIP_END) voice?.sayShort(r.say)
+        if (engine.driving || r.kind == Kind.TRIP_END) {
+            // the spoken line follows the growth stage too (see Voice); an egg cannot talk, so it stays quiet
+            val stage = engine.snapshot().stage
+            if (stage != GrowthStage.EGG) Voice.react(stage, r)?.let { voice?.sayShort(it) }
+        }
         if (r.kind == Kind.TRIP_END) { pendingTrip = engine.lastTrip; pendingShownAt = 0L; pendingFinds = tripFinds.toList(); tripFinds.clear() }
         save()
         reactionListeners.forEach { it(r) }

@@ -260,7 +260,7 @@ class PetEngine(
         lastPoints = total; lastKm = tripKm; tripCount++
         rollDay(); tripsToday++; if (clean) cleanTripsToday++
         onReaction(Reaction(Kind.TRIP_END, if (clean) "이번 주행 +${total}점! 아주 부드러웠어" else "이번 주행 +${total}점 모았어", moodDelta, total))
-        if (level > before) onReaction(Reaction(Kind.LEVEL_UP, "레벨 업! 이제 ${level}단계야", 0, 0))
+        if (level > before) levelUp()
     }
 
     fun onTurnSignal(s: Signal) {
@@ -327,7 +327,7 @@ class PetEngine(
             val before = level
             mood = (mood + 2).coerceAtMost(100)
             gain(CALM_POINTS)
-            if (level > before) onReaction(Reaction(Kind.LEVEL_UP, "레벨 업! 이제 ${level}단계야", 0, 0))
+            if (level > before) levelUp()
             else if (calmTicks % (CALM_TICKS_PER_STEP * 4) == 0) onReaction(Reaction(Kind.CALM, "부드러운 운전이라 편안해", +2, CALM_POINTS))
         }
     }
@@ -337,7 +337,14 @@ class PetEngine(
         mood = (mood + moodDelta).coerceIn(0, 100)
         gain(pts)
         onReaction(Reaction(kind, say, moodDelta, pts))
-        if (level > before) onReaction(Reaction(Kind.LEVEL_UP, "레벨 업! 이제 ${level}단계야", 0, 0))
+        if (level > before) levelUp()
+    }
+
+    /** a new level: a few bonus points (not xp) and a line naming what it opened in the shop */
+    private fun levelUp() {
+        points += LEVEL_REWARD; earnedPoints += LEVEL_REWARD
+        val opened = Catalog.unlockedAt(level).joinToString("·") { it.name }
+        onReaction(Reaction(Kind.LEVEL_UP, "레벨 업! Lv.${level} 보너스 +${LEVEL_REWARD}P" + if (opened.isNotEmpty()) " · 상점에 ${opened} 열렸어" else "", 0, 0))
     }
 
     /** rough driving: only the pet's mood suffers; no points are taken away */
@@ -367,6 +374,7 @@ class PetEngine(
         // what earns points
         const val SIGNAL_POINTS = 10
         const val CALM_POINTS = 3
+        const val LEVEL_REWARD = 20         // bonus points on each new level
         const val CLEAN_BONUS = 10          // a whole drive without a single rough moment
         const val MAX_DISTANCE_POINTS = 40  // 2 points per km, up to this much per drive
         const val GAME_DAILY_CAP = 50        // most points the mini game can give in a day

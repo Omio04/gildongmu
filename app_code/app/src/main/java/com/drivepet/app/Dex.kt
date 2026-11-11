@@ -34,8 +34,8 @@ object Korea {
 
     val regions: List<Region> = listOf(
         Region("seoul", "서울", listOf(
-            d("seoul", "tteok", "떡볶이", F, C, "🍢"), d("seoul", "chicken", "치킨", F, C, "🍗"),
-            d("seoul", "hanbok", "한복", P, U, "👘"), d("seoul", "gyeongbok", "경복궁 기와", S, U, "🏯"), d("seoul", "namsan", "남산타워", S, R, "🗼")),
+            d("seoul", "tteok", "떡볶이", F, C, "🌶️"), d("seoul", "chicken", "치킨", F, C, "🍗"),
+            d("seoul", "hanbok", "한복", P, U, "👗"), d("seoul", "gyeongbok", "경복궁 기와", S, U, "🏯"), d("seoul", "namsan", "남산타워", S, R, "🗼")),
             a(37.564, 126.998, 37.497, 127.028, 37.551, 126.850, 37.654, 127.056, 37.478, 126.951, 37.514, 127.105, 37.603, 126.929,
               37.557, 126.924, 37.589, 127.017, 37.530, 127.124, 37.495, 126.887, 37.669, 127.047, 37.526, 126.896, 37.484, 127.032)),
         Region("busan", "부산", listOf(

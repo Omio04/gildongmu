@@ -49,19 +49,34 @@ class DexMapView(context: Context, private val onPick: (String) -> Unit) : View(
     private val bmpPaint = Paint(Paint.FILTER_BITMAP_FLAG)
     private val rect = RectF()
 
+    /** dark mode: a night sea, dim land colours and light labels */
+    private var night = false
+
     private fun c(hex: String) = Color.parseColor(hex)
+
+    private fun makeSea(w: Int, h: Int) = Paint().apply {
+        shader = android.graphics.LinearGradient(0f, 0f, w * 0.25f, h.toFloat(),
+            if (night) intArrayOf(c("#0A1448"), c("#122A74"), c("#1C3F96")) else intArrayOf(c("#D5E8FC"), c("#B4D5F8"), c("#9CC9F2")),
+            floatArrayOf(0f, 0.55f, 1f), android.graphics.Shader.TileMode.CLAMP)
+    }
+    private val rimColor get() = if (night) 0xFFEAF1FF.toInt() else Color.WHITE
+    private val lineColor get() = if (night) Color.argb(200, 150, 165, 210) else Color.argb(242, 255, 255, 255)
+    private val textColor get() = if (night) 0xFFF0F3FF.toInt() else Look.INK
+    private val haloColor get() = if (night) Color.argb(235, 14, 22, 48) else Color.argb(242, 255, 255, 255)
+    private val doneColor get() = if (night) c("#FFD27A") else c("#B07A00")
+    private val subColor get() = if (night) 0xFFB8C2E6.toInt() else Look.SUB
 
     /** the colour group of each region (like the colour blocks of a sticker map) */
     private val hue: Map<String, Int> = mapOf(
-        "seoul" to "#B49BE6", "incheon" to "#B49BE6", "gyeonggi" to "#B49BE6",
-        "gangwon" to "#F5B36B",
-        "chungbuk" to "#F29A84", "sejong" to "#F29A84", "daejeon" to "#F29A84",
-        "chungnam" to "#8EB2EE",
-        "jeonbuk" to "#F3CB62",
-        "gwangju" to "#7CCDB4", "jeonnam" to "#7CCDB4",
-        "gyeongbuk" to "#7CC0E4", "daegu" to "#7CC0E4",
-        "gyeongnam" to "#EE9CB5", "busan" to "#EE9CB5", "ulsan" to "#EE9CB5",
-        "jeju" to "#95CF8B",
+        "seoul" to "#9B6CFF", "incheon" to "#9B6CFF", "gyeonggi" to "#9B6CFF",
+        "gangwon" to "#F5A04A",
+        "chungbuk" to "#E8589E", "sejong" to "#E8589E", "daejeon" to "#E8589E",
+        "chungnam" to "#5B8FF9",
+        "jeonbuk" to "#E2C84A",
+        "gwangju" to "#35C48A", "jeonnam" to "#35C48A",
+        "gyeongbuk" to "#4E8BEA", "daegu" to "#4E8BEA",
+        "gyeongnam" to "#E266C0", "busan" to "#E266C0", "ulsan" to "#E266C0",
+        "jeju" to "#86DA5A",
     ).mapValues { c(it.value) }
 
     /** small cities are named on a chip out at sea, with a line to the place: (chip lon, chip lat) */
@@ -71,7 +86,7 @@ class DexMapView(context: Context, private val onPick: (String) -> Unit) : View(
     )
     /** names that sit on the region, where the middle of the biggest outline is a bad place */
     private val labelAt: Map<String, Pair<Double, Double>> = mapOf(
-        "gyeonggi" to (127.3 to 37.2), "chungnam" to (126.75 to 36.5), "jeonnam" to (126.95 to 34.9), "jeju" to (126.55 to 33.0),
+        "gyeonggi" to (127.3 to 37.2), "chungnam" to (126.75 to 36.5), "jeonnam" to (126.95 to 34.9), "jeju" to (126.55 to 33.36),
     )
 
     init {
@@ -103,10 +118,8 @@ class DexMapView(context: Context, private val onPick: (String) -> Unit) : View(
             }
             paths[sh.id] = p
         }
-        seaBg = Paint().apply {
-            shader = android.graphics.LinearGradient(0f, 0f, w * 0.25f, h.toFloat(),
-                intArrayOf(c("#D5E8FC"), c("#B4D5F8"), c("#9CC9F2")), floatArrayOf(0f, 0.55f, 1f), android.graphics.Shader.TileMode.CLAMP)
-        }
+        night = Night.isDark(context)
+        seaBg = makeSea(w, h)
         buildBuffers(w, h)
     }
 
@@ -155,11 +168,13 @@ class DexMapView(context: Context, private val onPick: (String) -> Unit) : View(
     /** how a region is coloured: dull when nothing is found, brighter with every find, fully bright when complete */
     private fun fillOf(id: String): Int {
         val r = Korea.region(id) ?: return Color.GRAY
-        val hueC = hue[id] ?: Color.GRAY
-        if (!PetHub.started) return mix(hueC, PAPER, 0.62f)
+        val hueC = (hue[id] ?: Color.GRAY).let { if (night) mix(it, 0xFF121A44.toInt(), 0.06f) else it }
+        val paper = if (night) PAPER_NIGHT else PAPER
+        val k = 0.3f   // how far an undiscovered region fades toward the paper (the colours stay vivid)
+        if (!PetHub.started) return mix(hueC, paper, k)
         val n = PetHub.dex.count(id)
         val frac = n / r.items.size.toFloat()
-        return mix(hueC, PAPER, 0.62f * (1f - frac) + (if (n == 0) 0.04f else 0f))
+        return mix(hueC, paper, k * (1f - frac) + (if (n == 0) 0.04f else 0f))
     }
 
     private fun recolor() {
@@ -175,7 +190,7 @@ class DexMapView(context: Context, private val onPick: (String) -> Unit) : View(
             var col = colors[r]
             val rightDiff = x + 1 < w && reg[i + 1] == r && cel[i + 1] != cel[i]
             val downDiff = y + 1 < h && reg[i + w] == r && cel[i + w] != cel[i]
-            if (rightDiff || downDiff) col = mix(col, Color.WHITE, 0.45f)
+            if (rightDiff || downDiff) col = if (night) mix(col, 0xFF8FA0D0.toInt(), 0.2f) else mix(col, Color.WHITE, 0.45f)
             val grain = (((x * 73856093) xor (y * 19349663)) and 15) / 3   // a fine paper grain
             out[i] = Color.rgb((Color.red(col) - grain).coerceAtLeast(0), (Color.green(col) - grain).coerceAtLeast(0), (Color.blue(col) - grain).coerceAtLeast(0))
         }
@@ -184,33 +199,41 @@ class DexMapView(context: Context, private val onPick: (String) -> Unit) : View(
 
     override fun onDraw(cv: Canvas) {
         val w = width.toFloat(); val h = height.toFloat()
+        val nowNight = Night.isDark(context)
+        if (nowNight != night) { night = nowNight; seaBg = makeSea(width, height); recolor() }   // the mode was switched while the map is open
         seaBg?.let { cv.drawRect(0f, 0f, w, h, it) }
+        if (night) drawSky(cv, w, h)
         // little wave marks on the sea
-        stroke.color = Color.argb(140, 255, 255, 255); stroke.strokeWidth = 1.6f * d
+        stroke.color = if (night) Color.argb(60, 190, 210, 255) else Color.argb(140, 255, 255, 255); stroke.strokeWidth = 1.6f * d
         for (wv in waves) {
             val x = wv[0] * w; val y = wv[1] * h; val s = wv[2] * d
             ink.path.reset(); ink.path.moveTo(x - s, y); ink.path.quadTo(x - s / 2f, y - s * 0.6f, x, y); ink.path.quadTo(x + s / 2f, y + s * 0.6f, x + s, y)
             cv.drawPath(ink.path, stroke)
         }
         if (KoreaMap.shapes.isEmpty()) {
-            txt.color = Look.INK; txt.textSize = 16 * d; cv.drawText("지도를 불러오지 못했어요", w / 2, h / 2, txt); return
+            txt.color = textColor; txt.textSize = 16 * d; cv.drawText("지도를 불러오지 못했어요", w / 2, h / 2, txt); return
         }
         // sea names
-        txt.typeface = disp; txt.color = Color.argb(230, 255, 255, 255); txt.textSize = 15 * d
+        txt.typeface = disp; txt.color = if (night) Color.argb(230, 120, 160, 255) else Color.argb(230, 255, 255, 255); txt.textSize = 15 * d
         cv.drawText("서해", px(125.0), py(34.25), txt); cv.drawText("동해", px(130.65), py(37.2), txt); cv.drawText("남해", px(128.2), py(33.6), txt)
         txt.typeface = Typeface.DEFAULT_BOLD
 
         // the land as a paper sticker: a soft shadow, a white rim, the colours, the outlines
-        fill.color = Color.argb(72, 70, 90, 130)
+        fill.color = if (night) Color.argb(80, 10, 18, 50) else Color.argb(72, 70, 90, 130)
         cv.save(); cv.translate(2.5f * d, 4f * d)
         for (p in paths.values) cv.drawPath(p, fill)
         cv.restore()
-        stroke.color = Color.WHITE; stroke.strokeWidth = 5f * d
+        // a soft glow around the land (bluer and stronger at night)
+        stroke.color = if (night) Color.argb(34, 150, 185, 255) else Color.argb(40, 255, 255, 255); stroke.strokeWidth = 20f * d
+        for (p in paths.values) cv.drawPath(p, stroke)
+        stroke.color = if (night) Color.argb(70, 175, 205, 255) else Color.argb(80, 255, 255, 255); stroke.strokeWidth = 11f * d
+        for (p in paths.values) cv.drawPath(p, stroke)
+        stroke.color = rimColor; stroke.strokeWidth = (if (night) 3.4f else 5f) * d
         for (p in paths.values) cv.drawPath(p, stroke)
         bmp?.let { cv.drawBitmap(it, 0f, 0f, bmpPaint) }
 
         // outlines: thin white around every region, gold around the finished ones, a cocoa line around the chosen one
-        stroke.color = Color.argb(242, 255, 255, 255); stroke.strokeWidth = 1.8f * d
+        stroke.color = lineColor; stroke.strokeWidth = 1.8f * d
         for (p in paths.values) cv.drawPath(p, stroke)
         if (PetHub.started) {
             stroke.color = c("#F2B33D"); stroke.strokeWidth = 2.8f * d
@@ -218,8 +241,8 @@ class DexMapView(context: Context, private val onPick: (String) -> Unit) : View(
         }
         selected?.let { id ->
             paths[id]?.let {
-                stroke.color = Color.argb(205, 255, 255, 255); stroke.strokeWidth = 8f * d; cv.drawPath(it, stroke)
-                stroke.color = Look.COCOA; stroke.strokeWidth = 2.6f * d; cv.drawPath(it, stroke)
+                stroke.color = if (night) Color.argb(205, 200, 215, 255) else Color.argb(205, 255, 255, 255); stroke.strokeWidth = 8f * d; cv.drawPath(it, stroke)
+                stroke.color = if (night) c("#FFE08A") else Look.COCOA; stroke.strokeWidth = 2.6f * d; cv.drawPath(it, stroke)
             }
         }
         drawLabels(cv)
@@ -237,23 +260,24 @@ class DexMapView(context: Context, private val onPick: (String) -> Unit) : View(
             if (call == null) {
                 // the name on the region, with a white halo so it reads on any colour
                 val x = px(lp.first); val y = py(lp.second)
-                halo(cv, r.name, x, y, disp, 15f * d, Look.INK)
-                halo(cv, tag, x, y + 14f * d, Typeface.DEFAULT_BOLD, 11f * d, if (done) c("#B07A00") else Look.SUB)
+                halo(cv, r.name, x, y, disp, 15f * d, textColor)
+                halo(cv, tag, x, y + 14f * d, Typeface.DEFAULT_BOLD, 11f * d, if (done) doneColor else subColor)
                 rect.set(x - 24 * d, y - 16 * d, x + 24 * d, y + 18 * d); chips += RectF(rect) to r.id
             } else {
                 // small cities: a cream chip out at sea, joined to the place by a line
                 val ax = px(r.anchors.first().second); val ay = py(r.anchors.first().first)
                 val cx = px(call.first); val cy = py(call.second)
-                stroke.color = Color.argb(242, 255, 255, 255); stroke.strokeWidth = 1.6f * d
+                stroke.color = lineColor; stroke.strokeWidth = 1.6f * d
                 cv.drawLine(ax, ay, cx, cy, stroke)
-                fill.color = Color.WHITE; cv.drawCircle(ax, ay, 3f * d, fill)
-                stroke.color = Look.COCOA; stroke.strokeWidth = 1.2f * d; cv.drawCircle(ax, ay, 3f * d, stroke)
-                rect.set(cx - 25 * d, cy - 17 * d, cx + 25 * d, cy + 17 * d)
-                cv.save(); cv.translate(0f, 2f * d); fill.color = Color.argb(60, 60, 90, 140); cv.drawRoundRect(rect, 12 * d, 12 * d, fill); cv.restore()
-                fill.color = c("#FFFCF6"); cv.drawRoundRect(rect, 12 * d, 12 * d, fill)
-                stroke.color = hue[r.id] ?: Color.GRAY; stroke.strokeWidth = 2.4f * d; cv.drawRoundRect(rect, 12 * d, 12 * d, stroke)
-                txt.typeface = disp; txt.color = Look.INK; txt.textSize = 13.5f * d; cv.drawText(r.name, cx, cy - 1f * d, txt)
-                txt.typeface = Typeface.DEFAULT_BOLD; txt.textSize = 10f * d; txt.color = if (done) c("#B07A00") else Look.SUB; cv.drawText(tag, cx, cy + 12f * d, txt)
+                fill.color = rimColor; cv.drawCircle(ax, ay, 3f * d, fill)
+                stroke.color = if (night) c("#0E1731") else Look.COCOA; stroke.strokeWidth = 1.2f * d; cv.drawCircle(ax, ay, 3f * d, stroke)
+                rect.set(cx - 40 * d, cy - 18 * d, cx + 40 * d, cy + 18 * d)
+                cv.save(); cv.translate(0f, 2f * d); fill.color = Color.argb(60, 60, 90, 140); cv.drawRoundRect(rect, 18 * d, 18 * d, fill); cv.restore()
+                fill.color = if (night) c("#0F1A55") else c("#FFFCF6"); cv.drawRoundRect(rect, 18 * d, 18 * d, fill)
+                stroke.color = hue[r.id] ?: Color.GRAY; stroke.strokeWidth = 2.4f * d; cv.drawRoundRect(rect, 18 * d, 18 * d, stroke)
+                drawLandmark(cv, r.id, cx - 24 * d, cy, 17f * d, if (night) 0xFFE6ECFF.toInt() else (hue[r.id] ?: Color.GRAY))
+                txt.typeface = disp; txt.color = textColor; txt.textSize = 13.5f * d; cv.drawText(r.name, cx + 11 * d, cy - 1f * d, txt)
+                txt.typeface = Typeface.DEFAULT_BOLD; txt.textSize = 10f * d; txt.color = if (done) doneColor else subColor; cv.drawText(tag, cx + 11 * d, cy + 12f * d, txt)
                 chips += RectF(rect) to r.id
             }
             if (r.id == here) {
@@ -265,10 +289,59 @@ class DexMapView(context: Context, private val onPick: (String) -> Unit) : View(
         }
     }
 
+    /** a tiny landmark for each city chip: a tower, an anchor, a building, a ship or a bridge */
+    private fun drawLandmark(cv: Canvas, id: String, x: Float, y: Float, s: Float, color: Int) {
+        stroke.color = color; stroke.strokeWidth = 1.8f * d; fill.color = color
+        val h = s / 2f
+        when (id) {
+            "seoul", "daejeon", "gwangju", "daegu" -> {   // a tower with a round deck
+                cv.drawLine(x, y - h, x, y + h, stroke)
+                rect.set(x - h * 0.45f, y - h * 0.45f, x + h * 0.45f, y - h * 0.05f); cv.drawOval(rect, fill)
+                cv.drawLine(x - h * 0.45f, y + h, x + h * 0.45f, y + h, stroke)
+            }
+            "incheon" -> {   // an anchor
+                cv.drawCircle(x, y - h * 0.65f, h * 0.22f, stroke)
+                cv.drawLine(x, y - h * 0.42f, x, y + h * 0.75f, stroke)
+                cv.drawLine(x - h * 0.4f, y - h * 0.1f, x + h * 0.4f, y - h * 0.1f, stroke)
+                rect.set(x - h * 0.7f, y - h * 0.3f, x + h * 0.7f, y + h * 0.95f); cv.drawArc(rect, 20f, 140f, false, stroke)
+            }
+            "sejong" -> {   // a building with columns
+                cv.drawLine(x - h * 0.75f, y - h * 0.2f, x, y - h * 0.8f, stroke); cv.drawLine(x, y - h * 0.8f, x + h * 0.75f, y - h * 0.2f, stroke)
+                for (i in -1..1) cv.drawLine(x + i * h * 0.4f, y - h * 0.05f, x + i * h * 0.4f, y + h * 0.7f, stroke)
+                cv.drawLine(x - h * 0.8f, y + h * 0.85f, x + h * 0.8f, y + h * 0.85f, stroke)
+            }
+            "ulsan" -> {   // a ship
+                ink.path.reset(); ink.path.moveTo(x - h * 0.9f, y + h * 0.2f); ink.path.lineTo(x + h * 0.9f, y + h * 0.2f); ink.path.lineTo(x + h * 0.55f, y + h * 0.75f); ink.path.lineTo(x - h * 0.55f, y + h * 0.75f); ink.path.close()
+                cv.drawPath(ink.path, fill)
+                ink.path.reset(); ink.path.moveTo(x, y - h * 0.85f); ink.path.lineTo(x + h * 0.6f, y + h * 0.05f); ink.path.lineTo(x, y + h * 0.05f); ink.path.close()
+                cv.drawPath(ink.path, fill)
+            }
+            "busan" -> {   // a bridge
+                cv.drawLine(x - h * 0.5f, y - h * 0.8f, x - h * 0.5f, y + h * 0.6f, stroke); cv.drawLine(x + h * 0.5f, y - h * 0.8f, x + h * 0.5f, y + h * 0.6f, stroke)
+                cv.drawLine(x - h, y + h * 0.4f, x + h, y + h * 0.4f, stroke)
+                rect.set(x - h * 0.95f, y - h * 0.9f, x + h * 0.95f, y + h * 0.5f); cv.drawArc(rect, 10f, 160f, false, stroke)
+            }
+        }
+    }
+
+    /** the night sky: a few soft clouds low in the corners and little stars */
+    private fun drawSky(cv: Canvas, w: Float, h: Float) {
+        fill.color = OPAQUE_BLACK
+        for ((cx, cy, r) in arrayOf(Triple(0.04f, 0.9f, 0.16f), Triple(0.14f, 0.97f, 0.15f), Triple(0.24f, 1.02f, 0.14f), Triple(0.88f, 0.92f, 0.16f), Triple(0.97f, 0.98f, 0.18f), Triple(0.78f, 1.03f, 0.14f))) {
+            fill.shader = android.graphics.RadialGradient(cx * w, cy * h, r * h, intArrayOf(Color.argb(78, 120, 150, 255), Color.argb(34, 110, 140, 255), Color.argb(0, 100, 130, 255)), floatArrayOf(0f, 0.6f, 1f), android.graphics.Shader.TileMode.CLAMP)
+            cv.drawCircle(cx * w, cy * h, r * h, fill)
+        }
+        fill.shader = null
+        for ((i, wv) in waves.withIndex()) {
+            fill.color = Color.argb(90 + (i % 4) * 40, 255, 246, 216)
+            cv.drawCircle(wv[0] * w, wv[1] * h * 0.85f, (0.5f + (wv[2] - 5f) * 0.14f) * d, fill)
+        }
+    }
+
     /** text with a white halo (stroke under fill) */
     private fun halo(cv: Canvas, s: String, x: Float, y: Float, face: Typeface, size: Float, color: Int) {
         txt.typeface = face; txt.textSize = size
-        txt.style = Paint.Style.STROKE; txt.strokeWidth = 4f * d; txt.strokeJoin = Paint.Join.ROUND; txt.color = Color.argb(242, 255, 255, 255)
+        txt.style = Paint.Style.STROKE; txt.strokeWidth = 4f * d; txt.strokeJoin = Paint.Join.ROUND; txt.color = haloColor
         cv.drawText(s, x, y, txt)
         txt.style = Paint.Style.FILL; txt.color = color
         cv.drawText(s, x, y, txt)
@@ -302,8 +375,10 @@ class DexMapView(context: Context, private val onPick: (String) -> Unit) : View(
     private companion object {
         const val LON_MIN = 124.6
         const val LON_MAX = 131.0
-        const val LAT_MIN = 33.0
+        const val LAT_MIN = 32.85   // a little sea under Jeju, so its name and count are not cut off
         const val LAT_MAX = 38.65
-        const val PAPER = 0xFFE6DED2.toInt()   // the faded paper a region starts as
+        private const val OPAQUE_BLACK = 0xFF000000.toInt()
+        const val PAPER = 0xFFEFE8DC.toInt()   // the faded paper a region starts as
+        const val PAPER_NIGHT = 0xFF33458F.toInt()   // the same, at night: an indigo, not black
     }
 }

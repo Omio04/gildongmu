@@ -64,6 +64,8 @@ class RoomPainter(context: Context) {
     private val d = context.resources.displayMetrics.density
     /** while the pet is hurt the room loses its colour, as before */
     var hurt = false
+    /** dark mode: the room is lit only by the lamp and the moon, and the window looks out on the city at night */
+    var night = false
 
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
@@ -73,9 +75,19 @@ class RoomPainter(context: Context) {
     private val ink = Ink()
 
     private fun t(col: Int): Int {
-        if (!hurt) return col
-        val g = (Color.red(col) + Color.green(col) + Color.blue(col)) / 3f
-        return Color.argb(Color.alpha(col), (Color.red(col) * 0.4f + g * 0.6f).toInt(), (Color.green(col) * 0.4f + g * 0.6f).toInt(), (Color.blue(col) * 0.4f + g * 0.6f).toInt())
+        var c = col
+        if (hurt) {
+            val g = (Color.red(c) + Color.green(c) + Color.blue(c)) / 3f
+            c = Color.argb(Color.alpha(c), (Color.red(c) * 0.4f + g * 0.6f).toInt(), (Color.green(c) * 0.4f + g * 0.6f).toInt(), (Color.blue(c) * 0.4f + g * 0.6f).toInt())
+        }
+        if (night) {
+            // the same room with the daylight taken out: a deep violet-blue, the cream turning to dusk
+            c = Color.argb(Color.alpha(c),
+                (Color.red(c) * 0.36f + 10f).toInt().coerceIn(0, 255),
+                (Color.green(c) * 0.34f + 12f).toInt().coerceIn(0, 255),
+                (Color.blue(c) * 0.46f + 26f).toInt().coerceIn(0, 255))
+        }
+        return c
     }
     private fun ta(col: Int, alpha: Float) = Look.alpha(t(col), alpha)
     private fun lin(x0: Float, y0: Float, x1: Float, y1: Float, c0: Int, c1: Int) = LinearGradient(x0, y0, x1, y1, t(c0), t(c1), Shader.TileMode.CLAMP)
@@ -157,9 +169,10 @@ class RoomPainter(context: Context) {
         for ((ua, ub) in arrayOf(u0 to um - 0.012f, um + 0.012f to u1)) for ((va, vb) in arrayOf(0f to 0.2f, 0.23f to 0.46f)) {
             val sh = 0.24f   // the light leans a little, like late morning sun
             g.floorPoint(ua + va * sh, va, a); g.floorPoint(ub + va * sh, va, b); g.floorPoint(ub + vb * sh, vb, c); g.floorPoint(ua + vb * sh, vb, e)
-            poly(cv, a[0], a[1], b[0], b[1], c[0], c[1], e[0], e[1], shader = LinearGradient(0f, by1, 0f, c[1], 0x57FFFAEB, 0x14FFFAEB, Shader.TileMode.CLAMP))
+            // daylight falls on the floor through the window; at night it is a faint cold moonlight instead
+            poly(cv, a[0], a[1], b[0], b[1], c[0], c[1], e[0], e[1], shader = LinearGradient(0f, by1, 0f, c[1], if (night) 0x2E9DB4F0 else 0x57FFFAEB, if (night) 0x0A9DB4F0 else 0x14FFFAEB, Shader.TileMode.CLAMP))
         }
-        fill.color = OPAQUE; fill.shader = LinearGradient(0f, by1, 0f, h, intArrayOf(0x33FFF8EB, 0x00FFF8EB, 0x1A784C24), floatArrayOf(0f, 0.45f, 1f), Shader.TileMode.CLAMP)
+        fill.color = OPAQUE; fill.shader = LinearGradient(0f, by1, 0f, h, intArrayOf(if (night) 0x149DB4F0 else 0x33FFF8EB, 0x00FFF8EB, 0x1A784C24), floatArrayOf(0f, 0.45f, 1f), Shader.TileMode.CLAMP)
         cv.drawRect(0f, by1, w, h, fill); fill.shader = null
         cv.restore()
         fill.color = OPAQUE; fill.shader = LinearGradient(0f, by1, 0f, by1 + h * 0.035f, 0x2E6E461E, 0x006E461E, Shader.TileMode.CLAMP)
@@ -176,10 +189,24 @@ class RoomPainter(context: Context) {
         line.color = ta(0xFF9C7650.toInt(), 0.22f); line.strokeWidth = h * 0.0035f
         cv.drawLine(bx0, by0, bx0, by1, line); cv.drawLine(bx1, by0, bx1, by1, line); cv.drawLine(bx0, by1, bx1, by1, line)
         cv.drawLine(0f, 0f, bx0, by0, line); cv.drawLine(w, 0f, bx1, by0, line); cv.drawLine(0f, h, bx0, by1, line); cv.drawLine(w, h, bx1, by1, line)
-        fill.color = OPAQUE; fill.shader = RadialGradient(w / 2f, h * 0.55f, hypot(w, h) * 0.62f, intArrayOf(0x00784C24, 0x00784C24, 0x29784C24), floatArrayOf(0f, 0.55f, 1f), Shader.TileMode.CLAMP)
+        val vig = if (night) 0x101030 else 0x784C24
+        fill.color = OPAQUE; fill.shader = RadialGradient(w / 2f, h * 0.55f, hypot(w, h) * 0.62f, intArrayOf(vig, vig, (if (night) 0x66 else 0x29) shl 24 or vig), floatArrayOf(0f, 0.55f, 1f), Shader.TileMode.CLAMP)
         cv.drawRect(0f, 0f, w, h, fill); fill.shader = null
 
         if ("rug" in furniture) rug(cv, g)
+        if (night) lampLight(cv, g)
+    }
+
+    /** the lamp is always in the room and is lit in dark mode: a warm pool of light over the wall and the floor around it */
+    fun lampSpot(g: RoomGeo): FloatArray { val p = FloatArray(3); g.floorPoint(LAMP_U, LAMP_V, p); return p }
+
+    private fun lampLight(cv: Canvas, g: RoomGeo) {
+        val p = lampSpot(g)
+        val s = g.h * 0.1f * p[2]
+        val cx = p[0]; val cy = p[1] - s * 2.9f
+        fill.color = OPAQUE
+        fill.shader = RadialGradient(cx, cy, g.h * 0.66f, intArrayOf(0x70FFD98A, 0x38FFC878, 0x12FFB864, 0x00FFB864), floatArrayOf(0f, 0.28f, 0.62f, 1f), Shader.TileMode.CLAMP)
+        cv.drawRect(0f, 0f, g.w, g.h, fill); fill.shader = null
     }
 
     fun windowRect(g: RoomGeo): RectF { val ww = g.wallW * 0.32f; val wh = g.wallH * 0.5f; val x = (g.bx0 + g.bx1) / 2f - ww / 2f; val y = g.by0 + g.wallH * 0.11f; return RectF(x, y, x + ww, y + wh) }
@@ -196,8 +223,8 @@ class RoomPainter(context: Context) {
         val glass = Path().apply { addRoundRect(RectF(x, y, x + w, y + h), floatArrayOf(top, top, top, top, 3f * d, 3f * d, 3f * d, 3f * d), Path.Direction.CW) }
         cv.save(); cv.clipPath(glass)
         windowScene(cv, x, y, w, h)
-        poly(cv, x + w * 0.1f, y + h, x + w * 0.3f, y + h, x + w * 0.75f, y, x + w * 0.55f, y, color = 0x38FFFFFF)
-        poly(cv, x + w * 0.36f, y + h, x + w * 0.42f, y + h, x + w * 0.87f, y, x + w * 0.81f, y, color = 0x1FFFFFFF)
+        poly(cv, x + w * 0.1f, y + h, x + w * 0.3f, y + h, x + w * 0.75f, y, x + w * 0.55f, y, color = if (night) 0x12FFFFFF else 0x38FFFFFF)
+        poly(cv, x + w * 0.36f, y + h, x + w * 0.42f, y + h, x + w * 0.87f, y, x + w * 0.81f, y, color = if (night) 0x0AFFFFFF else 0x1FFFFFFF)
         cv.restore()
         line.color = ta(0xFF9C7650.toInt(), 0.25f); line.strokeWidth = 1.2f * d; cv.drawPath(glass, line)
         // the bars
@@ -241,6 +268,7 @@ class RoomPainter(context: Context) {
 
     /** the view out of the window: the icon's city */
     private fun windowScene(cv: Canvas, x: Float, y: Float, w: Float, h: Float) {
+        if (night) { nightScene(cv, x, y, w, h); return }
         fill.color = OPAQUE; fill.shader = lin(0f, y, 0f, y + h, intArrayOf(0xFF8DBAF6.toInt(), 0xFFC3DBFB.toInt(), 0xFFDCEAFD.toInt()), floatArrayOf(0f, 0.7f, 1f))
         cv.drawRect(x, y, x + w, y + h, fill); fill.shader = null
         Pics.cloud(cv, ink, x + w * 0.27f, y + h * 0.3f, w * 0.13f, t(Look.WHITE), ta(0xFFC9D8F2.toInt(), 0.6f))
@@ -265,6 +293,53 @@ class RoomPainter(context: Context) {
         }
         fill.color = t(0xFFCFC7C3.toInt()); cv.drawRect(x, ground, x + w, y + h, fill)
         line.color = 0xE6FFFFFF.toInt(); line.strokeWidth = h * 0.012f
+        val ry = ground + (y + h - ground) * 0.55f
+        for (i in 0 until 5) { val dx = x + w * (0.06f + i * 0.22f); cv.drawLine(dx, ry, dx + w * 0.1f, ry, line) }
+    }
+
+    /**
+     * the same city after dark: a deep blue sky with stars and a moon, dark blue buildings with a few lit windows,
+     * dark round trees and a quiet road. (Painted with its own colours, not tinted from the day view.)
+     */
+    private fun nightScene(cv: Canvas, x: Float, y: Float, w: Float, h: Float) {
+        fill.color = OPAQUE
+        fill.shader = LinearGradient(0f, y, 0f, y + h, intArrayOf(0xFF0B1433.toInt(), 0xFF1B2A5C.toInt(), 0xFF34457F.toInt()), floatArrayOf(0f, 0.65f, 1f), Shader.TileMode.CLAMP)
+        cv.drawRect(x, y, x + w, y + h, fill); fill.shader = null
+        // stars: always the same ones, so the picture does not flicker when it is repainted
+        for (i in STARS.indices step 3) {
+            val sx = x + w * STARS[i]; val sy = y + h * STARS[i + 1] * 0.62f; val sr = w * STARS[i + 2]
+            fill.color = Look.alpha(0xFFFFF6D8.toInt(), 0.55f + 0.45f * ((i / 3) % 3) / 2f)
+            cv.drawCircle(sx, sy, sr, fill)
+        }
+        // the moon, a crescent in a soft halo
+        val mx = x + w * 0.74f; val my = y + h * 0.22f; val mr = w * 0.075f
+        fill.color = OPAQUE
+        fill.shader = RadialGradient(mx, my, mr * 3.4f, 0x40FFF1C2, 0x00FFF1C2, Shader.TileMode.CLAMP)
+        cv.drawCircle(mx, my, mr * 3.4f, fill); fill.shader = null
+        fill.color = 0xFFFFF1C2.toInt(); cv.drawCircle(mx, my, mr, fill)
+        fill.color = 0xFF1B2A5C.toInt(); cv.drawCircle(mx + mr * 0.5f, my - mr * 0.18f, mr * 0.88f, fill)
+        Pics.cloud(cv, ink, x + w * 0.25f, y + h * 0.32f, w * 0.12f, 0xFF3A4A86.toInt(), 0xFF2B3A70.toInt())
+        val ground = y + h * 0.86f
+        for ((bi, bld) in BUILDINGS.withIndex()) {
+            val bx = x + w * bld[0]; val bw = w * bld[1]; val bh = h * bld[2]
+            path.reset(); rect.set(bx, ground - bh, bx + bw, ground + 2f)
+            path.addRoundRect(rect, floatArrayOf(w * 0.015f, w * 0.015f, w * 0.015f, w * 0.015f, 0f, 0f, 0f, 0f), Path.Direction.CW)
+            fill.color = NIGHT_BUILDING_COLORS[bi]; cv.drawPath(path, fill)
+            val rows = max(2, (bld[2] * 9).toInt())
+            for (rw in 0 until rows) for (cl in 0 until 2) {
+                val wx = bx + bw * (0.18f + cl * 0.42f); val wy = ground - bh + h * 0.05f + rw * h * 0.07f
+                val lit = ((bi * 7 + rw * 5 + cl * 3) % 5) < 2   // some windows are lit, always the same ones
+                fill.color = if (lit) 0xFFFFD98A.toInt() else 0xFF3A4678.toInt()
+                cv.drawRect(wx, wy, wx + bw * 0.24f, wy + h * 0.035f, fill)
+            }
+        }
+        for ((ti, tr) in TREES.withIndex()) {
+            val cx = x + w * tr[0]; val rr = w * tr[1] * 0.55f
+            fill.color = 0xFF24433F.toInt(); cv.drawCircle(cx, ground - rr * 0.7f, rr, fill)
+            fill.color = if (ti % 2 == 0) 0xFF30584F.toInt() else 0xFF2B4E49.toInt(); cv.drawCircle(cx - rr * 0.25f, ground - rr * 0.95f, rr * 0.7f, fill)
+        }
+        fill.color = 0xFF3A3F58.toInt(); cv.drawRect(x, ground, x + w, y + h, fill)
+        line.color = 0x99C9D0E8.toInt(); line.strokeWidth = h * 0.012f
         val ry = ground + (y + h - ground) * 0.55f
         for (i in 0 until 5) { val dx = x + w * (0.06f + i * 0.22f); cv.drawLine(dx, ry, dx + w * 0.1f, ry, line) }
     }
@@ -358,10 +433,10 @@ class RoomPainter(context: Context) {
         fill.color = t(0xFFF3B88E.toInt()); cv.drawRoundRect(rect, s * 0.1f, s * 0.1f, fill); cv.drawRoundRect(rect, s * 0.1f, s * 0.1f, line)
     }
 
-    /** the floor lamp with its warm glow */
-    fun lamp(cv: Canvas, x: Float, ground: Float, s: Float) {
+    /** the floor lamp: always in the room (it is not something you buy). Switched off by day, lit with a warm glow in dark mode. */
+    fun lamp(cv: Canvas, x: Float, ground: Float, s: Float, on: Boolean = false) {
         val ow = max(1.2f * d, s * 0.08f)
-        fill.color = OPAQUE; fill.shader = RadialGradient(x, ground - s * 3f, s * 2.2f, 0x8CFFE28C.toInt(), 0x00FFE28C, Shader.TileMode.CLAMP); cv.drawCircle(x, ground - s * 3f, s * 2.2f, fill); fill.shader = null
+        if (on) { fill.color = OPAQUE; fill.shader = RadialGradient(x, ground - s * 3f, s * 2.2f, 0xB3FFE28C.toInt(), 0x00FFE28C, Shader.TileMode.CLAMP); cv.drawCircle(x, ground - s * 3f, s * 2.2f, fill); fill.shader = null }
         fill.color = 0x386E461E; rect.set(x - s * 0.8f, ground - s * 0.18f, x + s * 0.8f, ground + s * 0.18f); cv.drawOval(rect, fill)
         line.color = t(Look.COCOA); line.strokeWidth = s * 0.16f + ow; cv.drawLine(x, ground - s * 2.5f, x, ground - s * 0.1f, line)
         line.color = t(0xFF8C6447.toInt()); line.strokeWidth = s * 0.16f; cv.drawLine(x, ground - s * 2.5f, x, ground - s * 0.1f, line)
@@ -369,16 +444,22 @@ class RoomPainter(context: Context) {
         fill.color = t(0xFF8C6447.toInt()); cv.drawOval(rect, fill); line.color = t(Look.COCOA); line.strokeWidth = ow; cv.drawOval(rect, line)
         path.reset(); path.moveTo(x - s * 0.45f, ground - s * 3.45f); path.lineTo(x + s * 0.45f, ground - s * 3.45f); path.lineTo(x + s * 0.85f, ground - s * 2.3f)
         path.quadTo(x, ground - s * 2.18f, x - s * 0.85f, ground - s * 2.3f); path.close()
-        fill.color = OPAQUE; fill.shader = lin(x - s, 0f, x + s, 0f, intArrayOf(0xFFFFE79C.toInt(), 0xFFFBD36A.toInt(), 0xFFEDB64A.toInt()), floatArrayOf(0f, 0.55f, 1f)); cv.drawPath(path, fill); fill.shader = null
+        // lit: a bright warm shade (not tinted by the night); off: a pale, dull shade
+        val shade = if (on) intArrayOf(0xFFFFEDB0.toInt(), 0xFFFFD978.toInt(), 0xFFF5BE55.toInt()) else intArrayOf(t(0xFFF1E3C2.toInt()), t(0xFFE6D2A6.toInt()), t(0xFFD3B97E.toInt()))
+        fill.color = OPAQUE; fill.shader = LinearGradient(x - s, 0f, x + s, 0f, shade, floatArrayOf(0f, 0.55f, 1f), Shader.TileMode.CLAMP); cv.drawPath(path, fill); fill.shader = null
         cv.drawPath(path, line)
-        line.color = 0x99FFFFFF.toInt(); line.strokeWidth = ow; cv.drawLine(x - s * 0.32f, ground - s * 3.3f, x - s * 0.55f, ground - s * 2.5f, line)
+        if (on) {
+            // the bulb's light under the shade
+            fill.color = 0xFFFFF6CC.toInt(); rect.set(x - s * 0.5f, ground - s * 2.36f, x + s * 0.5f, ground - s * 2.12f); cv.drawOval(rect, fill)
+        }
+        line.color = if (on) 0xCCFFFFFF.toInt() else 0x99FFFFFF.toInt(); line.strokeWidth = ow; cv.drawLine(x - s * 0.32f, ground - s * 3.3f, x - s * 0.55f, ground - s * 2.5f, line)
     }
 
     /** a standing item as a small bitmap with its position, so it can be drawn in front of or behind the pet cheaply */
     class Sprite(val bmp: Bitmap, val left: Float, val top: Float)
 
     fun plantSprite(x: Float, ground: Float, s: Float): Sprite = sprite(x - s * 3.2f, ground - s * 4.8f, x + s * 3.2f, ground + s * 0.4f) { plant(it, x, ground, s) }
-    fun lampSprite(x: Float, ground: Float, s: Float): Sprite = sprite(x - s * 2.4f, ground - s * 5.3f, x + s * 2.4f, ground + s * 0.4f) { lamp(it, x, ground, s) }
+    fun lampSprite(x: Float, ground: Float, s: Float, on: Boolean = false): Sprite = sprite(x - s * 2.4f, ground - s * 5.3f, x + s * 2.4f, ground + s * 0.4f) { lamp(it, x, ground, s, on) }
 
     private fun sprite(l: Float, tp: Float, r: Float, bt: Float, draw: (Canvas) -> Unit): Sprite {
         val bmp = Bitmap.createBitmap(max(1, (r - l).toInt() + 2), max(1, (bt - tp).toInt() + 2), Bitmap.Config.ARGB_8888)
@@ -386,8 +467,13 @@ class RoomPainter(context: Context) {
         return Sprite(bmp, l, tp)
     }
 
-    private companion object {
-        const val RAIL = 0.70f   // the chair rail: 70% down the wall
+    companion object {
+        const val LAMP_U = 0.84f   // where the floor lamp stands (floor coordinates)
+        const val LAMP_V = 0.26f
+        private const val RAIL = 0.70f   // the chair rail: 70% down the wall
+        // stars in the night window: x, y, radius (fractions of the window)
+        private val STARS = floatArrayOf(0.1f, 0.12f, 0.012f, 0.22f, 0.4f, 0.009f, 0.35f, 0.08f, 0.011f, 0.48f, 0.3f, 0.008f, 0.6f, 0.14f, 0.01f, 0.88f, 0.42f, 0.009f, 0.93f, 0.1f, 0.011f, 0.07f, 0.5f, 0.008f, 0.55f, 0.52f, 0.007f, 0.82f, 0.62f, 0.008f)
+        private val NIGHT_BUILDING_COLORS = intArrayOf(0xFF2A3562.toInt(), 0xFF232D58.toInt(), 0xFF313C6C.toInt(), 0xFF283360.toInt(), 0xFF2F3A69.toInt(), 0xFF232D58.toInt())
         // buildings in the window: x, width, height (fractions of the window) and their colours
         val BUILDINGS = arrayOf(floatArrayOf(0.02f, 0.17f, 0.42f), floatArrayOf(0.17f, 0.14f, 0.58f), floatArrayOf(0.3f, 0.12f, 0.36f), floatArrayOf(0.62f, 0.15f, 0.5f), floatArrayOf(0.76f, 0.12f, 0.34f), floatArrayOf(0.86f, 0.16f, 0.46f))
         val BUILDING_COLORS = intArrayOf(0xFFA9BDE6.toInt(), 0xFF9BB2E0.toInt(), 0xFFB8CAEC.toInt(), 0xFFA3B9E4.toInt(), 0xFFB4C6EA.toInt(), 0xFF9BB2E0.toInt())

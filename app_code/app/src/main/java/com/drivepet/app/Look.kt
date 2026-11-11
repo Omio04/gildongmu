@@ -118,6 +118,37 @@ class Ink {
     fun ovalOutline(cv: Canvas, cx: Float, cy: Float, rx: Float, ry: Float, color: Int, w: Float) { line.color = color; line.strokeWidth = w; rect.set(cx - rx, cy - ry, cx + rx, cy + ry); cv.drawOval(rect, line) }
 }
 
+/**
+ * Light or dark for everything built from views (the cards, rows, texts and keys), so the whole app has the look of the map
+ * collection: by day the cream cards on the room, by night deep-blue glass with pale text. It is set once when the screen is
+ * built ([night]); the screen is built again when the driver switches.
+ */
+object Theme {
+    @JvmField var night = false
+
+    private fun lum(c: Int) = (0.299f * Color.red(c) + 0.587f * Color.green(c) + 0.114f * Color.blue(c)) / 255f
+
+    /** a surface colour: cream things become blue glass at night, white rows a lighter blue, colourful fills stay */
+    fun fill(c: Int): Int {
+        if (!night) return c
+        if (c == Look.WHITE) return 0xFF26348F.toInt()
+        val l = lum(c)
+        return when { l > 0.82f -> 0xE61A2466.toInt(); l > 0.62f -> 0xFF1F2B80.toInt(); else -> c }
+    }
+
+    /** a line colour: the pale borders become a soft periwinkle at night */
+    fun stroke(c: Int): Int = if (night && lum(c) > 0.7f) Color.argb(150, 140, 160, 240) else c
+
+    /** a text colour: the dark browns become pale, other dark colours are lightened */
+    fun text(c: Int): Int {
+        if (!night) return c
+        if (c == Look.INK || c == Look.COCOA) return 0xFFF0F3FF.toInt()
+        if (c == Look.SUB) return 0xFFB8C2E6.toInt()
+        if (c == Look.MUTED) return 0xFF8FA0E0.toInt()
+        return if (lum(c) < 0.5f) Look.mix(c, 0xFFFFFFFF.toInt(), 0.72f) else c
+    }
+}
+
 /** the parts of the screens built from views: cards, rows and the three kinds of buttons */
 class Kit(c: Context) {
     private val d = c.resources.displayMetrics.density
@@ -127,7 +158,7 @@ class Kit(c: Context) {
 
     /** a cream card: the surface of everything that sits on the room */
     fun card(r: Float, fill: Int = Look.CREAM, stroke: Int = Look.LINE, strokeW: Float = 1.2f) = GradientDrawable().apply {
-        setColor(fill); cornerRadius = dp(r); if (strokeW > 0f) setStroke(px(strokeW), stroke)
+        setColor(Theme.fill(fill)); cornerRadius = dp(r); if (strokeW > 0f) setStroke(px(strokeW), Theme.stroke(stroke))
     }
 
     /** a white row inside a card */
@@ -173,7 +204,7 @@ class Kit(c: Context) {
     }
 
     /** a label in the display face */
-    fun title(tv: TextView, sp: Float, color: Int = Look.INK): TextView = tv.apply { typeface = face; textSize = sp; setTextColor(color); includeFontPadding = false }
+    fun title(tv: TextView, sp: Float, color: Int = Look.INK): TextView = tv.apply { typeface = face; textSize = sp; setTextColor(Theme.text(color)); includeFontPadding = false }
 
     /**
      * a key: the label in the display face on a primary / secondary / quiet background; the padding is set here (not added
@@ -183,8 +214,12 @@ class Kit(c: Context) {
         typeface = face; textSize = sp; includeFontPadding = false; gravity = Gravity.CENTER
         when (kind) {
             KEY_PRIMARY -> { background = primary(r); setTextColor(Look.WHITE); setShadowLayer(0.01f, 0f, dp(1f), 0x553A4FA0) }
-            KEY_SECONDARY -> { background = secondary(r); setTextColor(Look.PERI_DEEP); setShadowLayer(0f, 0f, 0f, 0) }
-            else -> { background = quiet(r); setTextColor(if (kind == KEY_DONE) Look.SAGE_D else Look.MUTED); setShadowLayer(0f, 0f, 0f, 0) }
+            KEY_SECONDARY -> {
+                if (Theme.night) { background = keyDrawable(r, intArrayOf(0xFF2A3796.toInt(), 0xFF2A3796.toInt()), intArrayOf(0xFF34439E.toInt(), 0xFF34439E.toInt()), 0xFF141C5E.toInt(), 0xFF8FA0E0.toInt(), 1); setTextColor(0xFFE6ECFF.toInt()) }
+                else { background = secondary(r); setTextColor(Look.PERI_DEEP) }
+                setShadowLayer(0f, 0f, 0f, 0)
+            }
+            else -> { background = quiet(r); setTextColor(Theme.text(if (kind == KEY_DONE) Look.SAGE_D else Look.MUTED)); setShadowLayer(0f, 0f, 0f, 0) }
         }
         val extra = if (kind == KEY_PRIMARY || kind == KEY_SECONDARY) lip else 0
         setPadding(px(padH), px(padV), px(padH), px(padV) + extra)

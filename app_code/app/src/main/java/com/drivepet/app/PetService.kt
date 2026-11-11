@@ -64,6 +64,7 @@ class PetService : Service() {
                 "find" -> PetHub.demoFind()
                 "dex_fill" -> PetHub.demoDexFill(i.getStringExtra("ids").orEmpty().split(",").filter { it.isNotBlank() })
                 "dex_clear" -> PetHub.demoDexClear()
+                "art_sheet" -> ItemArt.sheet(java.io.File(filesDir, "items.png"))
             }
         }
     }

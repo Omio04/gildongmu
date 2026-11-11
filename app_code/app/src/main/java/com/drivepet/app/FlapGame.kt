@@ -14,7 +14,9 @@ import kotlin.math.min
 class FlapGame(var w: Float, var h: Float, seed: Long = 7L) {
     enum class Phase { READY, RUNNING, OVER }
 
-    class Pipe(var x: Float, val gapY: Float)
+    /** [n]: the how-manyth sign of this run (the place name on it follows the trip round the country) */
+    class Pipe(var x: Float, val gapY: Float, val n: Int = 0)
+    private var pipeCount = 0
     class Coin(var x: Float, val y: Float, var taken: Boolean = false)
 
     private val rnd = Random(seed)
@@ -36,7 +38,7 @@ class FlapGame(var w: Float, var h: Float, seed: Long = 7L) {
     fun reset() {
         phase = Phase.READY
         carY = h / 2f; vy = 0f; coins = 0; distance = 0f
-        pipes.clear(); coinList.clear()
+        pipes.clear(); coinList.clear(); pipeCount = 0
         // the first pillar comes a little after the start so there is time to get a feel for the hop
         var x = w * 0.85f
         while (x < w + SPACING) { addPipe(x); x += SPACING }
@@ -46,7 +48,7 @@ class FlapGame(var w: Float, var h: Float, seed: Long = 7L) {
         val minY = GAP / 2f + 50f
         val maxY = groundTop - GAP / 2f - 30f
         val gapY = minY + rnd.nextFloat() * (maxY - minY)
-        pipes += Pipe(x, gapY)
+        pipes += Pipe(x, gapY, pipeCount++)
         coinList += Coin(x + PIPE_W / 2f, gapY)                                           // a coin in the gap
         coinList += Coin(x + PIPE_W + (SPACING - PIPE_W) / 2f, minY + rnd.nextFloat() * (maxY - minY))   // one between pillars
     }

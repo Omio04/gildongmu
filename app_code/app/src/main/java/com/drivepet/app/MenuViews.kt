@@ -157,7 +157,6 @@ class ItemThumb(context: Context, private val id: String) : View(context) {
             "sun", "round" -> unit(0.73f, -1.29f * k) { ow -> pet.glasses(cv, id, false, ow) }
             "jeans", "shorts" -> unit(0.62f, if (id == "jeans") -0.35f * k else -0.44f * k) { ow -> pet.pants(cv, id, ow, false) }
             "plant" -> room.plant(cv, cx, s * 0.9f, s * 0.19f)
-            "lamp" -> room.lamp(cv, cx, s * 0.92f, s * 0.21f)
             "clock" -> { room.clockFace(cv, cx, cy, s * 0.3f); room.clockHands(cv, cx, cy, s * 0.3f, 10f + 10f / 60f, 10f) }
             "picture" -> room.picture(cv, cx - s * 0.24f, cy - s * 0.2f, s * 0.48f, s * 0.4f)
             "rug" -> {
@@ -206,15 +205,16 @@ class SkyBandDrawable(context: Context, private val bandDp: Float, private val r
         val b = bounds; val w = b.width().toFloat(); val h = b.height().toFloat(); val band = bandDp * d; val r = radiusDp * d
         cv.save(); cv.translate(b.left.toFloat(), b.top.toFloat())
         ink.path.reset(); ink.path.addRoundRect(0f, 0f, w, h, r, r, Path.Direction.CW)
-        ink.fillPath(cv, ink.path, Look.CREAM)
+        ink.fillPath(cv, ink.path, Theme.fill(Look.CREAM))
         cv.save(); cv.clipPath(ink.path)
-        ink.fill.color = OPAQUE; ink.fill.shader = LinearGradient(0f, 0f, 0f, band, 0xFFA8CBFA.toInt(), 0xFFD9E9FD.toInt(), Shader.TileMode.CLAMP); cv.drawRect(0f, 0f, w, band + 20f * d, ink.fill); ink.fill.shader = null
-        Pics.cloud(cv, ink, w * 0.62f, 36f * d, 22f * d, 0xF2FFFFFF.toInt(), 0xB3CDDCF5.toInt())
-        Pics.cloud(cv, ink, w * 0.86f, 66f * d, 15f * d, 0xE6FFFFFF.toInt(), 0xB3CDDCF5.toInt())
+        val night = Theme.night
+        ink.fill.color = OPAQUE; ink.fill.shader = LinearGradient(0f, 0f, 0f, band, if (night) 0xFF14206E.toInt() else 0xFFA8CBFA.toInt(), if (night) 0xFF2C46A8.toInt() else 0xFFD9E9FD.toInt(), Shader.TileMode.CLAMP); cv.drawRect(0f, 0f, w, band + 20f * d, ink.fill); ink.fill.shader = null
+        Pics.cloud(cv, ink, w * 0.62f, 36f * d, 22f * d, if (night) 0x4D8FA0F0 else 0xF2FFFFFF.toInt(), if (night) 0x338FA0F0 else 0xB3CDDCF5.toInt())
+        Pics.cloud(cv, ink, w * 0.86f, 66f * d, 15f * d, if (night) 0x408FA0F0 else 0xE6FFFFFF.toInt(), if (night) 0x338FA0F0 else 0xB3CDDCF5.toInt())
         ink.path2.reset(); ink.path2.moveTo(0f, band); ink.path2.cubicTo(w * 0.3f, band - 14f * d, w * 0.65f, band + 10f * d, w, band - 6f * d)
-        ink.path2.lineTo(w, h); ink.path2.lineTo(0f, h); ink.path2.close(); ink.fillPath(cv, ink.path2, Look.CREAM)
+        ink.path2.lineTo(w, h); ink.path2.lineTo(0f, h); ink.path2.close(); ink.fillPath(cv, ink.path2, Theme.fill(Look.CREAM))
         cv.restore()
-        ink.stroke(cv, ink.path, Look.LINE, 1.2f * d)
+        ink.stroke(cv, ink.path, Theme.stroke(Look.LINE), 1.2f * d)
         cv.restore()
     }
     override fun setAlpha(alpha: Int) {}

@@ -257,6 +257,28 @@ class PetEngineTest {
         assertEquals(60, left())
     }
 
+    @Test fun levelOpensShopItems() {
+        val (spend, left) = wallet(500)
+        val w = Wardrobe()
+        assertFalse(w.buy("crown", spend, level = 4))   // the crown opens at Lv.5
+        assertEquals(500, left())
+        assertTrue(w.buy("crown", spend, level = 5))
+        assertTrue(w.buy("straw", spend, level = 1))   // Lv.1 items are open from the start
+        assertEquals(listOf("crown"), Catalog.unlockedAt(5).map { it.id })
+    }
+
+    @Test fun levelUpGivesBonusPointsAndNamesWhatOpened() {
+        var t = 0L
+        val seen = mutableListOf<Reaction>()
+        val e = PetEngine({ t }, PetSnapshot(70, PetEngine.XP_PER_LEVEL - 5, 1, 0, 0, 0, 0)) { seen += it }
+        e.setDriving(true)
+        e.onTurnSignal(Signal.LEFT); t += 100; e.onSteeringAngle(0f); t += 100; e.onSteeringAngle(90f)   // +10 xp: Lv.2
+        assertEquals(2, e.level)
+        val up = seen.first { it.kind == Kind.LEVEL_UP }
+        assertTrue(up.say.contains("베레모"))
+        assertEquals(PetEngine.SIGNAL_POINTS + PetEngine.LEVEL_REWARD, e.points)
+    }
+
     @Test fun cannotBuyWithoutEnoughPoints() {
         val (spend, left) = wallet(10)
         val w = Wardrobe()
@@ -288,8 +310,8 @@ class PetEngineTest {
     @Test fun wardrobeSurvivesSaveAndLoad() {
         val (spend, _) = wallet(500)
         val w = Wardrobe()
-        w.buy("beret", spend); w.buy("jeans", spend); w.buy("lamp", spend)
-        w.equip("beret"); w.equip("lamp")
+        w.buy("beret", spend); w.buy("jeans", spend); w.buy("clock", spend)
+        w.equip("beret"); w.equip("clock")
         val back = Wardrobe.from(w.ownedCsv(), w.equippedCsv())
         assertEquals(w.owned, back.owned)
         assertEquals(w.equipped, back.equipped)

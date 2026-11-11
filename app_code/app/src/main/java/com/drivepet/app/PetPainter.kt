@@ -27,6 +27,9 @@ import kotlin.math.sin
 class PetPainter {
     companion object { const val K = 0.833f }   // body height / body width, as before
 
+    /** 0..1: how wide the pet is yawning right now (set by the view before drawing) */
+    var yawn = 0f
+
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
     private val stitch = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
@@ -132,7 +135,9 @@ class PetPainter {
      * [ow] is the outline width in body units; [sticker] adds a white rim around the whole silhouette (the small pet over
      * other apps, so it reads on any map).
      */
-    fun draw(cv: Canvas, st: PetState, stage: GrowthStage, outfit: Map<Slot, String>, back: Boolean, walking: Boolean, stepT: Float, ow: Float, now: Long, sticker: Boolean) {
+    fun draw(cv: Canvas, st: PetState, stage: GrowthStage, outfitIn: Map<Slot, String>, back: Boolean, walking: Boolean, stepT: Float, ow: Float, now: Long, sticker: Boolean) {
+        // an egg and a baby cannot wear trousers (hats and glasses are fine)
+        val outfit = if ((stage == GrowthStage.EGG || stage == GrowthStage.INFANT) && Slot.PANTS in outfitIn) outfitIn - Slot.PANTS else outfitIn
         val sk = skin(st, back)
         val isEgg = stage == GrowthStage.EGG
         val liftA = if (walking) max(0f, sin(stepT)) * K * 0.3f else 0f
@@ -186,11 +191,17 @@ class PetPainter {
             fillPath(cv, shellPath, shellShader); outline(cv, shellPath, ow)
             fill.color = 0x73E8A955; cv.drawCircle(-0.5f, -0.25f * K, 0.08f, fill); cv.drawCircle(0.48f, -0.38f * K, 0.06f, fill)
         }
-        pants(cv, outfit[Slot.PANTS], ow, back)
+        pants(cv, outfit[Slot.PANTS], ow, back, clip = true)
         if (!isEgg && !back) paws(cv, sk.base, ow, if (walking) sin(stepT) else 0f)
         if (stage == GrowthStage.REBEL) for (t in tufts) { fillPath(cv, t, sk.tuft); outline(cv, t, ow) }
-        if (!back) face(cv, st, sk, ow, now)
-        if (stage == GrowthStage.ADULT && !back) { fillPath(cv, star, starShader); outline(cv, star, ow * 0.7f) }
+        if (!back) {
+            when {
+                isEgg && !sticker -> sleepFace(cv, sk)
+                yawn > 0.01f && !isEgg && st == PetState.NORMAL -> yawnFace(cv, sk, yawn)
+                stage == GrowthStage.REBEL && st == PetState.NORMAL -> deadpanFace(cv, sk)   // the rebel does not smile
+                else -> face(cv, st, sk, ow, now)
+            }
+        }
         glasses(cv, outfit[Slot.GLASSES], back, ow)
         hat(cv, outfit[Slot.HAT], ow)
     }
@@ -213,21 +224,41 @@ class PetPainter {
         }
     }
 
-    /** trousers: two legs and a waistband; also used for the shop picture */
-    fun pants(cv: Canvas, id: String?, ow: Float, back: Boolean) {
+    private val pantsCache = HashMap<Int, Path>()
+    private val beltPath = Path().apply { moveTo(-1.15f, -0.8f * K); quadTo(0f, -0.8f * K + 0.2f * K, 1.15f, -0.8f * K) }
+
+    /**
+     * Trousers that hug the body so they look worn: the colour fills the lower body from a belt that curves with the belly
+     * down to a hem, with a gap between the two legs (shorts stop above the feet, jeans go almost to the ground).
+     * With [clip] they are cut to the body's own outline, so they can never stick out of it. Also used for the shop picture.
+     */
+    fun pants(cv: Canvas, id: String?, ow: Float, back: Boolean, clip: Boolean = false) {
         id ?: return
         val jeans = id == "jeans"
-        val (l, r) = legPaths(id)
-        val shader = if (jeans) jeansShader else shortsShader
-        for (p in arrayOf(l, r)) { fillPath(cv, p, shader); outline(cv, p, ow * 0.85f) }
+        val band = if (jeans) 0xFF3F5BB0.toInt() else 0xFF4E9560.toInt()   // the belt: a darker strip of the same colour
+        val hem = (if (jeans) -0.03f else -0.22f) * K
+        val waistY = -0.8f * K; val sag = 0.1f * K
+        val p = pantsCache.getOrPut(if (jeans) 1 else 0) {
+            Path().apply {
+                moveTo(-1.15f, waistY); quadTo(0f, waistY + 2f * sag, 1.15f, waistY)   // the top edge is the belt line
+                lineTo(1.15f, hem); quadTo(0.62f, hem + 0.1f * K, 0.07f, hem)          // the right leg's hem
+                lineTo(0f, hem - 0.16f * K); lineTo(-0.07f, hem)                        // up to the crotch and down again
+                quadTo(-0.62f, hem + 0.1f * K, -1.15f, hem); close()                    // the left leg's hem
+            }
+        }
+        if (clip) { cv.save(); cv.clipPath(mochi) }
+        fillPath(cv, p, if (jeans) jeansShader else shortsShader); outline(cv, p, ow * 0.85f)
+        // seams: down the middle and along each leg
         stitch.color = if (jeans) 0xFFC9D7F7.toInt() else 0xFFE6F4E6.toInt(); stitch.strokeWidth = ow * 0.4f
         stitch.pathEffect = DashPathEffect(floatArrayOf(ow * 1.2f, ow), 0f)
-        val bottom = if (jeans) 0.06f * K else -0.14f * K
-        for (sg in SIDES) { val x = sg * 0.34f + sg * 0.12f; cv.drawLine(x, -0.48f * K, x, bottom - 0.06f * K, stitch) }
-        rect.set(-0.68f, -0.74f * K, 0.68f, -0.54f * K)
-        fill.shader = null; fill.color = if (jeans) 0xFF4B69BE.toInt() else 0xFF5FA56E.toInt(); cv.drawRoundRect(rect, 0.08f, 0.08f, fill)
-        line.color = Look.COCOA; line.strokeWidth = ow * 0.85f; cv.drawRoundRect(rect, 0.08f, 0.08f, line)
-        if (!back) { fill.color = if (jeans) 0xFFF6C760.toInt() else Look.WHITE; cv.drawCircle(0f, -0.64f * K, 0.045f, fill) }
+        for (sg in SIDES) cv.drawLine(sg * 0.46f, waistY + sag + 0.08f * K, sg * 0.46f, hem - 0.03f * K, stitch)
+        // the belt follows the curve of the belly
+        line.strokeCap = Paint.Cap.BUTT
+        line.color = Look.COCOA; line.strokeWidth = 0.12f + ow; cv.drawPath(beltPath, line)
+        line.color = band; line.strokeWidth = 0.12f - ow; cv.drawPath(beltPath, line)
+        line.strokeCap = Paint.Cap.ROUND
+        if (!back) { fill.shader = null; fill.color = if (jeans) 0xFFF6C760.toInt() else Look.WHITE; cv.drawCircle(0f, waistY + sag, 0.05f, fill) }
+        if (clip) cv.restore()
     }
 
     /** glasses; also used for the shop picture */
@@ -363,6 +394,47 @@ class PetPainter {
                 cv.restore()
             }
         }
+    }
+
+    /** a yawn: eyes squeezed shut and a wide open mouth, opening and closing with [k] */
+    private fun yawnFace(cv: Canvas, sk: Skin, k: Float) {
+        val eyeY = -1.3f * K; val eyeX = 0.36f; val er = 0.09f
+        for ((i, sg) in SIDES.withIndex()) { fill.color = OPAQUE; fill.shader = sk.cheek[i]; cv.drawOval(oval(sg * 0.62f, eyeY + 0.3f * K, 0.19f, 0.15f), fill) }
+        fill.shader = null
+        line.color = Look.COCOA; line.strokeWidth = 0.06f
+        for (sg in SIDES) {
+            val ex = sg * eyeX
+            tmp.reset(); tmp.moveTo(ex + sg * er * 1.2f, eyeY - er * 1.1f); tmp.lineTo(ex - sg * er * 1.1f, eyeY); tmp.lineTo(ex + sg * er * 1.2f, eyeY + er * 1.1f)
+            cv.drawPath(tmp, line)
+        }
+        val m = oval(0f, eyeY + (0.36f + 0.05f * k) * K, 0.06f + 0.07f * k, (0.05f + 0.17f * k) * K)
+        fill.color = 0xFF8F3F49.toInt(); cv.drawOval(m, fill)
+        line.strokeWidth = 0.05f; cv.drawOval(m, line)
+        if (k > 0.35f) { fill.color = 0xFFE8838A.toInt(); cv.drawOval(oval(0f, eyeY + (0.36f + 0.05f * k + 0.1f * k) * K, 0.045f + 0.04f * k, 0.05f * K), fill) }   // the tongue
+    }
+
+    /** the rebel's usual face: no expression. Dot eyes under flat, slightly drooping brows and a short flat mouth. */
+    private fun deadpanFace(cv: Canvas, sk: Skin) {
+        val eyeY = -1.3f * K; val eyeX = 0.36f; val er = 0.085f
+        for ((i, sg) in SIDES.withIndex()) { fill.color = OPAQUE; fill.shader = sk.cheek[i]; cv.drawOval(oval(sg * 0.62f, eyeY + 0.3f * K, 0.19f, 0.15f), fill) }
+        fill.shader = null
+        fill.color = Look.COCOA
+        for (sg in SIDES) cv.drawCircle(sg * eyeX, eyeY, er, fill)
+        line.color = Look.COCOA; line.strokeWidth = 0.038f
+        // half-lidded: a thin, perfectly level brow over each eye (tilted in is angry, tilted out is sad)
+        for (sg in SIDES) cv.drawLine(sg * eyeX - 0.13f, eyeY - er * 2.1f, sg * eyeX + 0.13f, eyeY - er * 2.1f, line)
+        line.strokeWidth = 0.055f
+        cv.drawLine(-0.07f, eyeY + 0.36f * K, 0.07f, eyeY + 0.36f * K, line)
+    }
+
+    /** the egg in its nest is asleep: closed eyes (a soft u), a little open mouth and the usual cheeks */
+    private fun sleepFace(cv: Canvas, sk: Skin) {
+        val eyeY = -1.3f * K; val eyeX = 0.36f; val er = 0.09f
+        for ((i, sg) in SIDES.withIndex()) { fill.color = OPAQUE; fill.shader = sk.cheek[i]; cv.drawOval(oval(sg * 0.62f, eyeY + 0.3f * K, 0.19f, 0.15f), fill) }
+        fill.shader = null
+        line.color = Look.COCOA; line.strokeWidth = 0.065f
+        for (sg in SIDES) cv.drawArc(oval(sg * eyeX, eyeY - er * 0.5f, er * 1.25f, er * 1.25f), 32.4f, 115.2f, false, line)
+        fill.color = 0xFFB5525A.toInt(); cv.drawOval(oval(0f, eyeY + 0.27f * K, 0.035f, 0.045f * K), fill)
     }
 
     private fun eyes(cv: Canvas, eyeX: Float, eyeY: Float, er: Float, glint: Float) {
