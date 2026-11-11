@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- debug only: lets the demo start a route on the emulator. The release build stays read-only. -->
+    <uses-permission android:name="pleos.car.permission.NAVI_ROUTE_SEARCH" />
+</manifest>
