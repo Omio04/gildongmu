@@ -214,6 +214,10 @@ class Kit(c: Context) {
         typeface = face; textSize = sp; includeFontPadding = false; gravity = Gravity.CENTER
         when (kind) {
             KEY_PRIMARY -> { background = primary(r); setTextColor(Look.WHITE); setShadowLayer(0.01f, 0f, dp(1f), 0x553A4FA0) }
+            KEY_DANGER -> {   // something that cannot be undone (deleting): coral, on a deeper lip
+                background = keyDrawable(r, intArrayOf(0xFFF7A58A.toInt(), 0xFFEC7E5E.toInt()), intArrayOf(0xFFEF8E70.toInt(), 0xFFE2704F.toInt()), Look.CORAL_D, 0, 0)
+                setTextColor(Look.WHITE); setShadowLayer(0.01f, 0f, dp(1f), 0x55A0402A)
+            }
             KEY_SECONDARY -> {
                 if (Theme.night) { background = keyDrawable(r, intArrayOf(0xFF2A3796.toInt(), 0xFF2A3796.toInt()), intArrayOf(0xFF34439E.toInt(), 0xFF34439E.toInt()), 0xFF141C5E.toInt(), 0xFF8FA0E0.toInt(), 1); setTextColor(0xFFE6ECFF.toInt()) }
                 else { background = secondary(r); setTextColor(Look.PERI_DEEP) }
@@ -221,7 +225,7 @@ class Kit(c: Context) {
             }
             else -> { background = quiet(r); setTextColor(Theme.text(if (kind == KEY_DONE) Look.SAGE_D else Look.MUTED)); setShadowLayer(0f, 0f, 0f, 0) }
         }
-        val extra = if (kind == KEY_PRIMARY || kind == KEY_SECONDARY) lip else 0
+        val extra = if (kind == KEY_PRIMARY || kind == KEY_SECONDARY || kind == KEY_DANGER) lip else 0
         setPadding(px(padH), px(padV), px(padH), px(padV) + extra)
     }
 
@@ -231,7 +235,7 @@ class Kit(c: Context) {
         addState(intArrayOf(), row(r))
     }
 
-    companion object { const val KEY_PRIMARY = 0; const val KEY_SECONDARY = 1; const val KEY_QUIET = 2; const val KEY_DONE = 3 }
+    companion object { const val KEY_PRIMARY = 0; const val KEY_SECONDARY = 1; const val KEY_QUIET = 2; const val KEY_DONE = 3; const val KEY_DANGER = 4 }
 }
 
 // ---------------------------------------------------------------- small pictures used inside text and on canvases

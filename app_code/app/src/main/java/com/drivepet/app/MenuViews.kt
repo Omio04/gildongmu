@@ -42,7 +42,7 @@ class AvatarView(context: Context) : View(context) {
     }
 }
 
-enum class IconKind { INFO, MISSION, SHOP, INVENTORY, GAME, DEX, SETTINGS, DEV }
+enum class IconKind { INFO, MISSION, SHOP, INVENTORY, GAME, DEX, RECORD, SETTINGS, DEV }
 
 /** The small icon in front of a menu row: a pastel tile with a tiny outlined drawing, in the character's style. */
 class MenuIcon(context: Context, private val kind: IconKind) : View(context) {
@@ -58,6 +58,7 @@ class MenuIcon(context: Context, private val kind: IconKind) : View(context) {
             IconKind.INVENTORY -> 0xFFE5F4E4.toInt() to 0xFFCDE9CC.toInt()
             IconKind.GAME -> 0xFFE5ECFD.toInt() to 0xFFCCDAF9.toInt()
             IconKind.DEX -> 0xFFDFF4EE.toInt() to 0xFFC2E8DC.toInt()
+            IconKind.RECORD -> 0xFFF1EBFE.toInt() to 0xFFDFD5F8.toInt()
             IconKind.SETTINGS -> 0xFFEEEDF5.toInt() to 0xFFDCDBEA.toInt()
             IconKind.DEV -> 0xFFEFEFEF.toInt() to 0xFFE0E0E0.toInt()
         }
@@ -107,6 +108,28 @@ class MenuIcon(context: Context, private val kind: IconKind) : View(context) {
                     ink.fillPath(cv, ink.path2, 0x59509F8C)
                     ink.stroke(cv, p, Look.COCOA, ow)
                     Pics.pin(cv, ink, cx, cy + s * 0.1f, s * 0.3f)
+                }
+                IconKind.RECORD -> {   // a calendar page whose days are the three score colours
+                    val l = cx - s * 0.28f; val t = cy - s * 0.22f; val r = cx + s * 0.28f; val b = cy + s * 0.28f
+                    box(cv, ink, l, t, r, b, s * 0.07f, null, ow, 0xFFFFFDF8.toInt())
+                    cv.save(); ink.rect.set(l, t, r, b); ink.path2.reset(); ink.path2.addRoundRect(ink.rect, s * 0.07f, s * 0.07f, android.graphics.Path.Direction.CW); cv.clipPath(ink.path2)
+                    ink.fill.color = OPAQUE; ink.fill.shader = LinearGradient(0f, t, 0f, t + s * 0.13f, 0xFF8FAAF0.toInt(), 0xFF6F8FE6.toInt(), Shader.TileMode.CLAMP)
+                    cv.drawRect(l, t, r, t + s * 0.13f, ink.fill); ink.fill.shader = null
+                    cv.restore()
+                    ink.line.color = Look.COCOA; ink.line.strokeWidth = ow * 0.8f; cv.drawLine(l, t + s * 0.13f, r, t + s * 0.13f, ink.line)
+                    ink.rect.set(l, t, r, b); cv.drawRoundRect(ink.rect, s * 0.07f, s * 0.07f, ink.line.apply { strokeWidth = ow })
+                    for (sg in intArrayOf(-1, 1)) {   // the two rings on top
+                        ink.rect.set(cx + sg * s * 0.13f - s * 0.035f, t - s * 0.06f, cx + sg * s * 0.13f + s * 0.035f, t + s * 0.07f)
+                        ink.fill.color = 0xFFFFFDF8.toInt(); cv.drawRoundRect(ink.rect, s * 0.035f, s * 0.035f, ink.fill)
+                        ink.line.strokeWidth = ow * 0.8f; cv.drawRoundRect(ink.rect, s * 0.035f, s * 0.035f, ink.line)
+                    }
+                    val cols = intArrayOf(0xFF8FD18C.toInt(), 0xFFFBD97A.toInt(), 0xFFFDB894.toInt(), 0xFFFBD97A.toInt(), 0xFF8FD18C.toInt(), 0xFF8FD18C.toInt())
+                    val cell = s * 0.12f; val gap = s * 0.035f
+                    val gx = cx - (cell * 3 + gap * 2) / 2f; val gy = t + s * 0.18f
+                    for (i in 0 until 6) {
+                        val x = gx + (i % 3) * (cell + gap); val y = gy + (i / 3) * (cell + gap)
+                        ink.rect.set(x, y, x + cell, y + cell); ink.fill.color = cols[i]; cv.drawRoundRect(ink.rect, cell * 0.3f, cell * 0.3f, ink.fill)
+                    }
                 }
                 IconKind.SETTINGS -> {   // a lavender gear
                     p.reset()

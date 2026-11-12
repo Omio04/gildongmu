@@ -126,4 +126,59 @@ object Voice {
     )
 
     fun idle(stage: GrowthStage, act: Idle): String? = IDLE[stage]?.get(act)?.pick()
+
+    // ------------------------------------------------------------------ the driving record: a word about one day
+
+    private val DAY: Map<GrowthStage, Map<DayTalk, List<String>>> = mapOf(
+        GrowthStage.EGG to mapOf(   // an egg cannot talk: what it does is told instead
+            DayTalk.GREAT to listOf("(알이 기분 좋게 흔들흔들해요)"), DayTalk.OKAY to listOf("(알이 살짝 꿈틀거려요)"),
+            DayTalk.LOW to listOf("(알이 조금 뒤척여요)"), DayTalk.NO_TURN to listOf("(알이 새근새근 자고 있어요)"),
+            DayTalk.REST to listOf("(쿨쿨… 알도 쉬는 날이었어요)"), DayTalk.EMPTY to listOf("(알이 첫 운전을 기다리고 있어요)"),
+            DayTalk.FUTURE to listOf("(알이 그날을 기다려요)"),
+        ),
+        GrowthStage.INFANT to mapOf(
+            DayTalk.GREAT to listOf("깜빡깜빡 최고야! 꺄르르~", "우와~ 깜빠기 다 켜쪄!"),
+            DayTalk.OKAY to listOf("잘해쪄! 깜빡이 쪼끔만 더~", "조아조아~ 거의 다 해쪄!"),
+            DayTalk.LOW to listOf("깜빠기… 까먹어쪄… 힝", "다음엔 깜빡깜빡 해 주라~"),
+            DayTalk.NO_TURN to listOf("빙글 안 돌아쪄! 쭉쭉 갔지~"),
+            DayTalk.REST to listOf("이날은 코~ 잤어"), DayTalk.EMPTY to listOf("같이 부릉부릉 하면 여기 적어 줄게!"),
+            DayTalk.FUTURE to listOf("아직이야~ 기다려!"),
+        ),
+        GrowthStage.REBEL to mapOf(
+            DayTalk.GREAT to listOf("…흠. 오늘은 인정.", "깜빡이 잘 켰네. 뭐, 당연한 거지만."),
+            DayTalk.OKAY to listOf("나쁘진 않아. 딱 거기까지.", "…조금만 더 하면 되잖아."),
+            DayTalk.LOW to listOf("깜빡이, 또 까먹었지?", "…이건 좀 아니다."),
+            DayTalk.NO_TURN to listOf("꺾을 일도 없었네. 심심했어."),
+            DayTalk.REST to listOf("…이날은 안 나갔잖아."), DayTalk.EMPTY to listOf("기록? 달려야 생기지."),
+            DayTalk.FUTURE to listOf("…아직 안 온 날이거든."),
+        ),
+        GrowthStage.ADULT to mapOf(
+            DayTalk.GREAT to listOf("깜빡이를 꼬박꼬박 켜 줬어. 든든했어.", "오늘 운전, 정말 배려 깊었어."),
+            DayTalk.OKAY to listOf("좋았어. 깜빡이 몇 번만 더 챙기면 완벽해.", "꽤 괜찮은 하루였어. 다음엔 90점 넘겨 보자."),
+            DayTalk.LOW to listOf("깜빡이를 자주 잊었네. 다음엔 같이 챙겨 보자.", "조금 아쉬웠어. 돌기 전에 깜빡이 먼저!"),
+            DayTalk.NO_TURN to listOf("회전이 없던 날이라 점수는 없어. 편안한 길이었지?"),
+            DayTalk.REST to listOf("이날은 쉬었어. 다음에 같이 달리자."), DayTalk.EMPTY to listOf("0.5km 넘게 달리면 내가 여기에 기록해 둘게!"),
+            DayTalk.FUTURE to listOf("아직 오지 않은 날이야. 그날도 같이 달리자!"),
+        ),
+    )
+
+    /** the pet's word about a day of the driving record; the same day always gets the same line (no flicker on redraw) */
+    fun day(stage: GrowthStage, talk: DayTalk, seed: Int = 0): String {
+        val lines = DAY[stage]?.get(talk) ?: DAY.getValue(GrowthStage.ADULT).getValue(talk)
+        return lines[Math.floorMod(seed, lines.size)]
+    }
+}
+
+/** how a day of the record went, for the pet's word about it */
+enum class DayTalk {
+    GREAT, OKAY, LOW, NO_TURN, REST, EMPTY, FUTURE;
+
+    companion object {
+        fun of(score: Int?): DayTalk = when {
+            score == null -> NO_TURN
+            score >= DriveLog.GOOD_SCORE -> GREAT
+            score >= 70 -> OKAY
+            else -> LOW
+        }
+    }
 }

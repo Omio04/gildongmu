@@ -65,6 +65,15 @@ class PetService : Service() {
                 "dex_fill" -> PetHub.demoDexFill(i.getStringExtra("ids").orEmpty().split(",").filter { it.isNotBlank() })
                 "dex_clear" -> PetHub.demoDexClear()
                 "art_sheet" -> ItemArt.sheet(java.io.File(filesDir, "items.png"))
+                // the driving record: a made-up history (ids = how many days back, default 45), one day
+                // (ids = "daysAgo,km,good,missed[,jerky,harsh]"), deleting it as the settings do, or no record and no badges at all
+                "log_demo" -> PetHub.demoDriveLog(i.getStringExtra("ids")?.toIntOrNull() ?: 45)
+                "log_day" -> i.getStringExtra("ids").orEmpty().split(",").map { it.trim() }.let { f ->
+                    if (f.size >= 4) PetHub.demoRecordDay(f[0].toIntOrNull() ?: 0, f[1].toFloatOrNull() ?: 1f, f[2].toIntOrNull() ?: 0, f[3].toIntOrNull() ?: 0,
+                        f.getOrNull(4)?.toIntOrNull() ?: 0, f.getOrNull(5)?.toIntOrNull() ?: 0)
+                }
+                "log_clear" -> PetHub.clearDriveLog()
+                "log_reset" -> PetHub.demoResetRecord()
             }
         }
     }

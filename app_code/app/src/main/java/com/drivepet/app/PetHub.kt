@@ -25,6 +25,15 @@ object PetHub {
         private set
     lateinit var dex: Dex
         private set
+    /** the driving record, one line per driven day (the calendar) */
+    lateinit var driveLog: DriveLog
+        private set
+    /** the badges earned so far (they stay when the record is deleted) */
+    lateinit var badges: BadgeBook
+        private set
+    /** goes up whenever the record or the badges change, so the screens know when to redraw them */
+    var recordVersion = 0
+        private set
 
     var vehicle: VehicleSource? = null
         private set
@@ -154,6 +163,8 @@ object PetHub {
         engine = PetEngine(SystemClock::elapsedRealtime, Store.load(c), ::onReaction)
         wardrobe = Store.loadWardrobe(c)
         dex = Store.loadDex(c)
+        driveLog = Store.loadDriveLog(c)
+        badges = Store.loadBadges(c)
         followCar = Store.loadSettings(c)
         Store.loadProfile(c).let { petName = it.first; onboarded = it.second }
         voice = PetVoice(c)
@@ -370,6 +381,76 @@ object PetHub {
     }
     fun demoDexClear() { dex.clear(); save(); tickListeners.forEach { it() } }
 
+    // ---------------------------------------------------------------- the driving record and the badges
+
+    /** the badges the last drive earned (for the trip card) */
+    var pendingBadges: List<Badge> = emptyList()
+        private set
+    /** was the last drive long enough to go into the driving record? */
+    var pendingRecorded = false
+        private set
+
+    /** a finished drive goes into today's line of the record; then the badges are checked and new ones paid once */
+    private fun recordTrip(t: TripResult?) {
+        pendingBadges = emptyList()
+        pendingRecorded = false
+        if (t == null) return
+        val today = currentDayKey()
+        if (!driveLog.addTrip(today, t)) return
+        pendingRecorded = true
+        pendingBadges = badges.evaluate(driveLog, today) { engine.addPoints(it) }
+        saveRecord()
+    }
+
+    private fun saveRecord() {
+        recordVersion++
+        app?.let { Store.saveDriveLog(it, driveLog); Store.saveBadges(it, badges) }
+    }
+
+    /** settings: delete every day of the driving record. The badges and the points already earned stay. */
+    fun clearDriveLog() {
+        driveLog.clear()
+        saveRecord(); tickListeners.forEach { it() }
+    }
+
+    /**
+     * demo only: a made-up record of the last [days] days (about two in three of them driven, every colour of the calendar,
+     * the last few days green), then the badges are checked as after a drive.
+     */
+    fun demoDriveLog(days: Int = 45) {
+        val rnd = java.util.Random(7)
+        val today = currentDayKey()
+        for (ago in days downTo 1) {
+            val near = ago <= 4                                  // the last few days: a green run
+            if (!near && rnd.nextInt(3) == 0) continue
+            val turns = 4 + rnd.nextInt(14)
+            val rate = if (near) 0.9f + rnd.nextFloat() * 0.1f else listOf(0.55f, 0.75f, 0.85f, 0.95f, 1f)[rnd.nextInt(5)]
+            val good = (if (near) kotlin.math.ceil(turns * rate.toDouble()).toInt() else (turns * rate).toInt()).coerceIn(0, turns)   // the green run really is 90+
+            val trips = 1 + rnd.nextInt(3)
+            val km = 2f + rnd.nextInt(380) / 10f
+            val jerky = if (rnd.nextInt(4) == 0) 1 + rnd.nextInt(2) else 0
+            val harsh = if (rnd.nextInt(5) == 0) 1 else 0
+            val points = good * PetEngine.SIGNAL_POINTS + minOf(PetEngine.MAX_DISTANCE_POINTS * trips, (km * 2).toInt()) + rnd.nextInt(5) * PetEngine.CALM_POINTS
+            driveLog.put(DayRecord(Days.plus(today, -ago), km, trips, good, turns - good, jerky, harsh, points))
+        }
+        if (driveLog.size > 0) pendingBadges = badges.evaluate(driveLog, today) { engine.addPoints(it) }
+        saveRecord(); save(); tickListeners.forEach { it() }
+    }
+
+    /** demo only: one day of the record, [daysAgo] days back (0 = today), then the badges are checked as after a drive */
+    fun demoRecordDay(daysAgo: Int, km: Float, good: Int, missed: Int, jerky: Int = 0, harsh: Int = 0) {
+        val today = currentDayKey()
+        driveLog.put(DayRecord(Days.plus(today, -daysAgo), km, 1, good, missed, jerky, harsh, good * PetEngine.SIGNAL_POINTS + (km * 2).toInt()))
+        pendingBadges = badges.evaluate(driveLog, today) { engine.addPoints(it) }
+        saveRecord(); save(); tickListeners.forEach { it() }
+    }
+
+    /** demo only: no record and no badges at all (to try the first-record badge again) */
+    fun demoResetRecord() {
+        driveLog.clear(); badges.clear(); pendingBadges = emptyList()
+        saveRecord(); tickListeners.forEach { it() }
+    }
+
     // ---------------------------------------------------------------- reactions and the clock
 
     /** the result of a drive that ended while the pet's screen was not open: shown for 7 s the next time it opens */
@@ -396,7 +477,10 @@ object PetHub {
             val stage = engine.snapshot().stage
             if (stage != GrowthStage.EGG) Voice.react(stage, r)?.let { voice?.sayShort(it) }
         }
-        if (r.kind == Kind.TRIP_END) { pendingTrip = engine.lastTrip; pendingShownAt = 0L; pendingFinds = tripFinds.toList(); tripFinds.clear() }
+        if (r.kind == Kind.TRIP_END) {
+            pendingTrip = engine.lastTrip; pendingShownAt = 0L; pendingFinds = tripFinds.toList(); tripFinds.clear()
+            recordTrip(engine.lastTrip)
+        }
         save()
         reactionListeners.forEach { it(r) }
     }
@@ -470,6 +554,15 @@ object Store {
     fun loadDex(c: Context): Dex = Dex(Dex.decode(c.getSharedPreferences(FILE, Context.MODE_PRIVATE).getString("dex", "")))
     fun saveDex(c: Context, d: Dex) {
         c.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putString("dex", Dex.encode(d.state())).apply()
+    }
+    /** the driving record and the badges: written only when they change (after a drive, a deletion), not every 10 s */
+    fun loadDriveLog(c: Context): DriveLog = DriveLog.decode(c.getSharedPreferences(FILE, Context.MODE_PRIVATE).getString("drivelog", ""))
+    fun saveDriveLog(c: Context, log: DriveLog) {
+        c.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putString("drivelog", DriveLog.encode(log)).apply()
+    }
+    fun loadBadges(c: Context): BadgeBook = BadgeBook.decode(c.getSharedPreferences(FILE, Context.MODE_PRIVATE).getString("badges", ""))
+    fun saveBadges(c: Context, b: BadgeBook) {
+        c.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putString("badges", BadgeBook.encode(b)).apply()
     }
     fun loadWardrobe(c: Context): Wardrobe {
         val p = c.getSharedPreferences(FILE, Context.MODE_PRIVATE)

@@ -90,6 +90,17 @@ class MainActivity : AppCompatActivity() {
     private lateinit var overlayBox: LinearLayout
     private var gameView: FlapGameView? = null
     private var dexLayer: DexLayer? = null
+    private var recordLayer: DriveRecordLayer? = null
+    // the badge box on the home screen, under 운전 기록
+    private lateinit var badgeBox: LinearLayout
+    private lateinit var badgeBoxCount: TextView
+    private lateinit var badgeBoxHint: TextView
+    private val badgeMedals = mutableListOf<MedalView>()
+    private var badgeBoxVersion = -1
+    // the driving record in the settings: how much is kept, delete, and the question before deleting
+    private lateinit var recordKept: TextView
+    private lateinit var recordDelete: TextView
+    private lateinit var recordConfirm: LinearLayout
     private var askedLocation = false
     private lateinit var quickBar: LinearLayout
     private lateinit var root: FrameLayout
@@ -148,7 +159,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onStop() {
-        closeGame(); closeDex()
+        closeGame(); closeDex(); closeRecord()
         PetHub.reactionListeners -= reactionL
         PetHub.tickListeners -= tickL
         PetHub.setAppVisible(false)   // the service now shows the small floating pet
@@ -165,6 +176,7 @@ class MainActivity : AppCompatActivity() {
         when {
             gameView != null -> closeGame()
             dexLayer != null -> { if (dexLayer?.back() != true) closeDex() }
+            recordLayer != null -> { if (recordLayer?.back() != true) closeRecord() }
             drawerOpen && page != Page.MENU -> showPage(Page.MENU)
             drawerOpen -> setDrawer(false)
             else -> @Suppress("DEPRECATION") super.onBackPressed()
@@ -274,7 +286,19 @@ class MainActivity : AppCompatActivity() {
         tripHead.text = "+${t.points}점"   // "이번 주행" is the ribbon above it
         val finds = PetHub.pendingFinds
         val dexLine = if (finds.isEmpty()) "" else "\n도감에 새로 담긴 것  " + finds.joinToString(", ") { it.item.name + (if (it.isNew) "" else "(중복)") }
-        tripBody.text = "%.1fkm 주행 · 깜빡이 %d번%s\n안전운전 포인트와 경험치에 더해졌어요%s".format(t.km, t.good, if (t.clean) " · 부드러운 주행 보너스" else "", dexLine)
+        // the driving record: a new badge, or why a very short drive was left out of it
+        val badges = PetHub.pendingBadges
+        val recordLine = when {
+            badges.isNotEmpty() -> "\n새 배지  " + badges.joinToString(", ") { "${it.name} +${it.reward}P" }
+            !PetHub.pendingRecorded && t.km < DriveLog.MIN_KM -> "\n%.2fkm로 0.5km보다 짧아서 운전 기록에는 넣지 않았어요".format(t.km)
+            else -> ""
+        }
+        tripBody.text = "%.1fkm 주행 · 깜빡이 %d번%s\n안전운전 포인트와 경험치에 더해졌어요%s%s".format(t.km, t.good, if (t.clean) " · 부드러운 주행 보너스" else "", dexLine, recordLine)
+        if (badges.isNotEmpty()) {
+            val sum = badges.sumOf { it.reward }
+            Voice.event(stageNow, Ev.REWARD, "${sum}P", "새 배지를 받았어! +${sum}P")?.let { say(it) }
+            pet.burst(true)
+        }
         tripCard.animate().cancel()
         tripCard.alpha = 0f; tripCard.visibility = View.VISIBLE
         tripCard.animate().alpha(1f).setDuration(300).start()
@@ -311,7 +335,10 @@ class MainActivity : AppCompatActivity() {
         val intro = onboard.visibility == View.VISIBLE
         hud.visibility = if (intro) View.GONE else View.VISIBLE
         topRight.visibility = if (intro) View.GONE else View.VISIBLE
-        quickBar.visibility = if (intro) View.GONE else View.VISIBLE   // 미니게임·지도 도감 are not shown while the pet introduces itself and is named
+        quickBar.visibility = if (intro) View.GONE else View.VISIBLE   // 미니게임·지도 도감·운전 기록 are not shown while the pet introduces itself and is named
+        updateBadgeBox()
+        updateRecordSettings()
+        recordLayer?.refresh()
         // the menu card's header
         avatar.state = st
         drawerName.text = name
@@ -648,7 +675,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun openDex() {
-        if (dexLayer != null || gameView != null) return
+        if (dexLayer != null || gameView != null || recordLayer != null) return
         setDrawer(false)
         val l = DexLayer(this) { closeDex() }
         l.elevation = dp(40).toFloat()
@@ -662,8 +689,52 @@ class MainActivity : AppCompatActivity() {
         refresh()
     }
 
+    /** the driving record (calendar, numbers, badges). Only while parked, like the rest of this screen. */
+    private fun openRecord(toBadges: Boolean = false) {
+        if (recordLayer != null || gameView != null || dexLayer != null || !PetHub.started) return
+        if (!PetHub.screenAllowed()) { closeIfNotAllowed(); return }
+        setDrawer(false)
+        val l = DriveRecordLayer(this) { closeRecord() }
+        l.elevation = dp(40).toFloat()
+        recordLayer = l
+        root.addView(l, FrameLayout.LayoutParams(-1, -1))
+        if (toBadges) l.showBadges()
+    }
+
+    private fun closeRecord() {
+        val l = recordLayer ?: return
+        root.removeView(l); recordLayer = null
+        refresh()
+    }
+
+    /** the badge box: the most recent badges first, then locked ones to fill the three places */
+    private fun updateBadgeBox() {
+        if (badgeBoxVersion == PetHub.recordVersion) return
+        badgeBoxVersion = PetHub.recordVersion
+        val book = PetHub.badges
+        val got = book.recent()
+        val show = (got + Badges.all.filter { !book.earned(it) }).take(badgeMedals.size)
+        show.forEachIndexed { i, b -> badgeMedals[i].medal = b.medal; badgeMedals[i].earned = book.earned(b) }
+        badgeBoxCount.text = "${book.earnedCount()}/${Badges.all.size}"
+        badgeBoxHint.text = if (got.isEmpty()) "첫 운전을 기록하면 받아요" else "눌러서 모든 배지 보기"
+    }
+
+    private fun updateRecordSettings() {
+        val log = PetHub.driveLog
+        recordKept.text = if (log.isEmpty) "아직 저장된 운전 기록이 없어요." else {
+            val first = log.days.first().day; val last = log.days.last().day
+            "${log.size}일의 기록이 이 차에 저장돼 있어요 (%d.%02d.%02d ~ %d.%02d.%02d).".format(first / 10000, first / 100 % 100, first % 100, last / 10000, last / 100 % 100, last % 100)
+        }
+        val can = !log.isEmpty
+        if (recordDelete.isEnabled != can) {
+            recordDelete.isEnabled = can
+            kit.key(recordDelete, if (can) Kit.KEY_SECONDARY else Kit.KEY_QUIET, 19f, 14f, 8f)
+        }
+        if (!can) recordConfirm.visibility = View.GONE
+    }
+
     private fun openGame() {
-        if (gameView != null) return
+        if (gameView != null || recordLayer != null) return
         setDrawer(false)
         val gv = FlapGameView(this, { closeGame() }) { coins -> PetHub.grantGamePoints(coins) }
         gv.elevation = dp(40).toFloat()
@@ -831,6 +902,38 @@ class MainActivity : AppCompatActivity() {
         shopPage = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         inventoryPage = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
+        // the driving record: how much is kept on the car, and deleting it (asked once more first)
+        recordKept = text("", 17f, ink).apply { setPadding(dp(6), 0, dp(6), 0); setLineSpacing(0f, 1.25f) }
+        recordConfirm = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            background = kit.card(20f, Look.CORAL_L, 0xFFF4C3B3.toInt(), 1.2f)
+            addView(text("정말 지울까요? 날짜별 운전 기록이 모두 지워지고 되돌릴 수 없어요.\n받은 배지와 포인트는 그대로 남아요.", 16.5f, ink).apply { setLineSpacing(0f, 1.3f) })
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                addView(TextView(context).apply {
+                    text = "지우기"; minHeight = dp(58)
+                    kit.key(this, Kit.KEY_DANGER, 20f, 14f, 8f)
+                    setOnClickListener {
+                        PetHub.clearDriveLog()
+                        recordConfirm.visibility = View.GONE
+                        say("운전 기록을 지웠어. 오늘부터 다시 쌓아 보자!")
+                    }
+                }, LinearLayout.LayoutParams(0, -2, 1f))
+                addView(TextView(context).apply {
+                    text = "취소"; minHeight = dp(58)
+                    kit.key(this, Kit.KEY_SECONDARY, 20f, 14f, 8f)
+                    setOnClickListener { recordConfirm.visibility = View.GONE }
+                }, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(10) })
+            }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+        }
+        recordDelete = TextView(this).apply {
+            text = "운전 기록 삭제"; minHeight = dp(58)
+            kit.key(this, Kit.KEY_SECONDARY, 19f, 14f, 8f)
+            setOnClickListener { recordConfirm.visibility = View.VISIBLE }
+        }
+
         followRow = option { PetHub.setFollowCar(!PetHub.followCar) }
         overlayState = text("", 14f, Look.CORAL_D)
         overlayBox = LinearLayout(this).apply {
@@ -857,6 +960,10 @@ class MainActivity : AppCompatActivity() {
             addView(heading("내비게이션을 켰을 때"))
             addView(followRow)
             addView(overlayBox)
+            addView(heading("운전 기록"))
+            addView(recordKept)
+            addView(recordDelete, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
+            addView(recordConfirm, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
         }
         devPage = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -869,6 +976,7 @@ class MainActivity : AppCompatActivity() {
             addView(row(chip("포인트 +200") { PetHub.demoGivePoints(200) }, chip("내비 경로 시작") { if (!PetHub.startDemoRoute()) say("내비게이션이 아직 연결되지 않았어요") }))
             addView(row(chip("미션: 진행 중") { PetHub.demoMission(false) }, chip("미션: 모두 완료") { PetHub.demoMission(true) }))
             addView(row(chip("처음 안내 다시 보기") { PetHub.demoResetOnboarding(); setDrawer(false); startOnboarding() }))
+            addView(row(chip("운전 기록 예시 채우기") { PetHub.demoDriveLog() }, chip("운전 기록·배지 초기화") { PetHub.demoResetRecord() }))
         }
 
         val pages = LinearLayout(this).apply {
@@ -970,11 +1078,40 @@ class MainActivity : AppCompatActivity() {
             addView(title(label, 24f, ink), LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(12) })
             setOnClickListener { onTap() }
         }
-        // under the menu button, at the right edge: the two things to do for fun
+        // the badges earned so far: three medals (the newest first, then locked ones), opens the record at its badges
+        badgeBoxCount = title("0/${Badges.all.size}", 17f, Look.HONEY_DEEP)
+        badgeBoxHint = text("", 13.5f, sub, true).apply { gravity = Gravity.CENTER; maxLines = 1 }
+        badgeBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+            background = kit.card(26f, 0xF5FFF9F1.toInt())
+            kit.lift(this, 4f)
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                addView(title("나의 달성 배지", 19f, ink), LinearLayout.LayoutParams(0, -2, 1f))
+                addView(badgeBoxCount)
+            })
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER
+                repeat(3) { i ->
+                    val m = MedalView(context, Medal.FIRST, false)
+                    badgeMedals += m
+                    addView(m, LinearLayout.LayoutParams(dp(58), dp(58)).apply { if (i > 0) leftMargin = dp(4) })
+                }
+            }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
+            addView(badgeBoxHint, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2) })
+            contentDescription = "나의 달성 배지. 눌러서 모든 배지 보기"
+            setOnClickListener { openRecord(toBadges = true) }
+        }
+        // under the menu button, at the right edge: the things to do for fun, the driving record and the badges
         quickBar = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(quick(IconKind.GAME, "미니게임") { openGame() }, LinearLayout.LayoutParams(dp(214), -2))
             addView(quick(IconKind.DEX, "지도 도감") { openDex() }, LinearLayout.LayoutParams(dp(214), -2).apply { topMargin = dp(14) })
+            addView(quick(IconKind.RECORD, "운전 기록") { openRecord() }, LinearLayout.LayoutParams(dp(214), -2).apply { topMargin = dp(14) })
+            addView(badgeBox, LinearLayout.LayoutParams(dp(214), -2).apply { topMargin = dp(14) })
         }
 
         root = FrameLayout(this).apply {
