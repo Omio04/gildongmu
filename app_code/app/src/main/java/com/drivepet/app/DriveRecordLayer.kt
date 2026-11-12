@@ -110,7 +110,7 @@ class DriveRecordLayer(context: Context, private val onClose: () -> Unit) : Fram
             addView(legendChip(Bands.GOOD, "90~100점"))
             addView(legendChip(Bands.FAIR, "70~89점"), lp(-2, -2).apply { leftMargin = dp(8f) })
             addView(legendChip(Bands.LOW, "0~69점"), lp(-2, -2).apply { leftMargin = dp(8f) })
-            addView(legendChip(Bands.NONE, "회전 없음 · 점수 없음"), lp(-2, -2).apply { leftMargin = dp(8f) })
+            addView(legendChip(Bands.NONE, "회전 ${DriveLog.MIN_TURNS}번 미만 · 점수 없음"), lp(-2, -2).apply { leftMargin = dp(8f) })
             addView(text("빈칸은 운전하지 않은 날", 14.5f, Look.SUB), lp(-2, -2).apply { leftMargin = dp(14f) })
         }
         val calendarCard = LinearLayout(context).apply {
@@ -233,14 +233,14 @@ class DriveRecordLayer(context: Context, private val onClose: () -> Unit) : Fram
         statsRow.removeAllViews()
         statsRow.addView(statCard("최근 7일 평균", score(s.avg7), color(s.avg7), if (s.avg7 == null) waiting else "깜빡이 사용 점수"), lp(0, -1, 1f))
         statsRow.addView(statCard("최근 30일 평균", score(s.avg30), color(s.avg30), if (s.avg30 == null) waiting else "깜빡이 사용 점수"), lp(0, -1, 1f).apply { leftMargin = dp(12f) })
-        val wd = s.weekDelta
+        val wd = s.weekRateDelta
         val weekSub = when {
-            s.weekRate != null && s.weekRateDelta != null -> "깜빡이 사용률 ${s.weekRate}% (${signed(s.weekRateDelta)}%p)"
+            s.weekRate != null && wd != null -> "이번 주 ${s.weekRate}% · 지난주 ${s.weekRate - wd}%"
             s.weekRate != null -> "이번 주 깜빡이 사용률 ${s.weekRate}%"
             else -> "두 주 기록이 있으면 보여요"
         }
         val weekColor = when { wd == null -> Look.MUTED; wd > 0 -> Bands.GOOD.text(); wd < 0 -> Bands.LOW.text(); else -> Look.SUB }
-        statsRow.addView(statCard("지난주보다", if (wd == null) "–" else withUnit(signed(wd), "점"), weekColor, weekSub), lp(0, -1, 1f).apply { leftMargin = dp(12f) })
+        statsRow.addView(statCard("지난주보다 깜빡이", if (wd == null) "–" else withUnit(signed(wd), "%p"), weekColor, weekSub), lp(0, -1, 1f).apply { leftMargin = dp(12f) })
         val label = if (month == Days.month(today)) "이번 달 기록" else "${month % 100}월 기록"
         val monthSub = if (s.monthDays == 0) "운전한 날이 없어요" else "%.1fkm 주행".format(s.monthKm) + (s.monthAvg?.let { " · 평균 ${it}점" } ?: "")
         statsRow.addView(statCard(label, withUnit("${s.monthDays}", "일 운전"), Look.INK, monthSub), lp(0, -1, 1f).apply { leftMargin = dp(12f) })
@@ -382,7 +382,7 @@ class DriveRecordLayer(context: Context, private val onClose: () -> Unit) : Fram
                     }
                 }, lp(-2, -2))
                 addView(text("깜빡이 사용 점수", 15.5f, Look.SUB, true), lp(-2, -2).apply { topMargin = dp(8f) })
-                addView(text(if (sc == null) "회전이 없어서 점수를 매기지 않았어요" else "회전 ${rec.turns}번 중 ${rec.good}번 깜빡이를 켰어요", 17f, Look.INK, true).apply {
+                addView(text(if (sc == null) (if (rec.turns == 0) "회전이 없어서 점수를 매기지 않았어요" else "회전이 ${rec.turns}번뿐이라 점수를 매기지 않았어요 (${DriveLog.MIN_TURNS}번 이상부터)") else "회전 ${rec.turns}번 중 ${rec.good}번 깜빡이를 켰어요", 17f, Look.INK, true).apply {
                     setLineSpacing(0f, 1.2f)
                 }, lp(-2, -2).apply { topMargin = dp(4f) })
             }, lp(0, -2, 1f).apply { leftMargin = dp(18f) })
@@ -570,7 +570,8 @@ class DriveRecordLayer(context: Context, private val onClose: () -> Unit) : Fram
             }, lp(-2, -2).apply { topMargin = dp(14f) })
             addView(text(
                 "· 0.5km보다 짧은 주행은 기록하지 않아요.\n" +
-                    "· 운전하지 않은 날은 빈칸, 운전했지만 회전이 없던 날은 점수 없이 회색이에요.\n" +
+                    "· 운전하지 않은 날은 빈칸, 운전했지만 회전이 ${DriveLog.MIN_TURNS}번보다 적었던 날은 점수 없이 회색이에요(한두 번 운으로 0점이나 100점이 나오지 않게).\n" +
+                    "· 평균은 날짜별 점수를 평균내지 않고, 그 기간의 모든 회전 중 깜빡이를 켠 비율이에요. 많이 달린 날이 더 크게 반영돼요.\n" +
                     "· 덜컹 브레이크와 급한 핸들은 차가 속도·가속도를 알려 주지 않아 짐작한 값이라, 점수에 넣지 않고 참고 기록으로만 보여줘요.\n" +
                     "· 현대자동차·TMAP의 안전운전 점수는 이 앱에서 쓸 수 있는 공개 연동이 없어서, 정확히 잴 수 있는 깜빡이로만 점수를 매겨요. 그래서 '안전운전 점수'가 아니라 '깜빡이 사용 점수'라고 불러요.",
                 16f, Look.SUB).apply { setLineSpacing(0f, 1.4f) }, lp(-1, -2).apply { topMargin = dp(16f) })

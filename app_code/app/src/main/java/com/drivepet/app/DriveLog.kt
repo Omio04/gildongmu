@@ -60,7 +60,7 @@ enum class ScoreBand(val label: String) {
     }
 }
 
-/** the numbers above the calendar. Averages are of the days' scores; days without a score are left out. */
+/** the numbers above the calendar. Averages count every turn of the days that have a score (see [DriveLog.average]). */
 data class DriveStats(
     /** the last 7 days, today included */
     val avg7: Int?,
@@ -173,17 +173,23 @@ class DriveLog(records: Collection<DayRecord> = emptyList()) {
         /** a "good" day: green on the calendar, and what the streak badges count */
         const val GOOD_SCORE = 90
 
-        fun score(good: Int, missed: Int): Int? = if (good + missed <= 0) null else (good * 100f / (good + missed)).roundToInt()
+        /** fewer turns than this and the day is not scored: one turn would make the day 0 or 100 on luck */
+        const val MIN_TURNS = 3
 
+        fun score(good: Int, missed: Int): Int? = if (good + missed < MIN_TURNS) null else (good * 100f / (good + missed)).roundToInt()
+
+        /**
+         * The share of turns made with the signal on, over all the turns of the days that have a score, in %. Not the mean of
+         * the days' scores: a day with 30 turns weighs more than a day with 3, and a short day cannot swing the average.
+         */
         private fun average(rs: Collection<DayRecord>): Int? {
-            val s = rs.mapNotNull { it.score }
-            return if (s.isEmpty()) null else s.average().roundToInt()
+            val scored = rs.filter { it.score != null }
+            val turns = scored.sumOf { it.turns }
+            return if (turns == 0) null else (scored.sumOf { it.good } * 100f / turns).roundToInt()
         }
 
-        private fun rate(rs: Collection<DayRecord>): Int? {
-            val turns = rs.sumOf { it.turns }
-            return if (turns == 0) null else (rs.sumOf { it.good } * 100f / turns).roundToInt()
-        }
+        /** the same number as [average]: one way of counting, so the tiles never show two different "rates" */
+        private fun rate(rs: Collection<DayRecord>): Int? = average(rs)
 
         /** "20261112,12.40,3,11,1,0,1,86;…" (one day per entry, oldest first) */
         fun encode(log: DriveLog): String = log.days.joinToString(";") {

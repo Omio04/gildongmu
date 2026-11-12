@@ -59,6 +59,34 @@ class DriveLogTest {
         assertEquals(ScoreBand.LOW, ScoreBand.of(69))
     }
 
+    @Test fun aDayNeedsThreeTurnsToBeScored() {
+        assertNull(DriveLog.score(1, 0))     // one turn would make the day 100 or 0 on luck
+        assertNull(DriveLog.score(1, 1))
+        assertNull(DriveLog.score(0, 2))
+        assertEquals(100, DriveLog.score(3, 0))
+        assertEquals(0, DriveLog.score(0, 3))
+        val log = DriveLog()
+        log.addTrip(today, trip(6f, good = 2))   // a drive, but only two turns
+        assertNull(log.day(today)!!.score)
+        assertEquals(1, log.stats(today).monthDays)   // still a driven day
+        assertNull(log.stats(today).avg7)
+        log.addTrip(today, trip(1f, good = 1))   // the day's third turn: now it counts
+        assertEquals(100, log.day(today)!!.score)
+    }
+
+    @Test fun averagesCountEveryTurnNotEveryDay() {
+        val log = DriveLog(listOf(
+            DayRecord(today, 20f, 1, good = 27, missed = 3),                    // 30 turns, 90
+            DayRecord(Days.plus(today, -1), 1f, 1, good = 0, missed = 3),       // 3 turns, 0
+        ))
+        // the mean of the two days would be 45; over the 33 turns it is 27 / 33
+        assertEquals(82, log.stats(today).avg7)
+        assertEquals(82, log.stats(today).weekRate)
+        // days that are not scored (under three turns) are left out of the average altogether
+        val withShort = DriveLog(log.days + DayRecord(Days.plus(today, -2), 1f, 1, good = 0, missed = 2))
+        assertEquals(82, withShort.stats(today).avg7)
+    }
+
     @Test fun recordSurvivesSavingAndLoading() {
         val log = DriveLog()
         log.addTrip(today, trip(12.4f, good = 5, missed = 1, jerky = 1, points = 60))
@@ -105,13 +133,13 @@ class DriveLogTest {
 
     @Test fun theMonthOnTheCalendar() {
         val log = DriveLog(listOf(
-            DayRecord(20261101, 10f, 1, 9, 1), DayRecord(20261112, 2.5f, 1, 1, 1),
+            DayRecord(20261101, 10f, 1, 9, 1), DayRecord(20261112, 2.5f, 1, 1, 2),
             DayRecord(20261031, 40f, 2, 5, 0), DayRecord(20261201, 3f, 1, 1, 0),
         ))
         val nov = log.stats(today)
         assertEquals(2, nov.monthDays)
         assertEquals(12.5f, nov.monthKm, 0.001f)
-        assertEquals(70, nov.monthAvg)            // (90 + 50) / 2
+        assertEquals(77, nov.monthAvg)            // 10 of 13 turns, not the mean of 90 and 33
         val oct = log.stats(today, 202610)
         assertEquals(1, oct.monthDays)
         assertEquals(40f, oct.monthKm, 0.001f)
