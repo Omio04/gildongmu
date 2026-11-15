@@ -253,10 +253,15 @@ object PetHub {
 
     private var lastOdometer: Float? = null
 
+    // Log.d lines (odometer steps, route, region) are for the debug build only: the release build stays quiet
+    @Volatile private var logOn = false
+    private fun dlog(m: String) { if (logOn) android.util.Log.d("DrivePet", m) }
+
     fun start(ctx: Context) {
         if (app != null) return
         val c = ctx.applicationContext
         app = c
+        logOn = (c.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
         engine = PetEngine(SystemClock::elapsedRealtime, Store.load(c), ::onReaction)
         wardrobe = Store.loadWardrobe(c)
         dex = Store.loadDex(c)
@@ -278,9 +283,9 @@ object PetHub {
             onRange = ::onRange,
             onSeatBelt = ::onSeatBelt,
             onWiper = ::onWiper,
-            onLog = { android.util.Log.d("DrivePet", it) },
+            onLog = { dlog(it) },
         ).also { it.start() }
-        navi = NaviSource(c, onTrip = { if ((it == null) != (navTrip == null)) android.util.Log.d("DrivePet", "navi route: ${it?.destination ?: "none"}"); navTrip = it }, onTurn = { turn = it }, onLog = { android.util.Log.d("DrivePet", it) }, onLocation = ::onNaviPosition).also { it.start() }
+        navi = NaviSource(c, onTrip = { if ((it == null) != (navTrip == null)) dlog("navi route: ${it?.destination ?: "none"}"); navTrip = it }, onTurn = { turn = it }, onLog = { dlog(it) }, onLocation = ::onNaviPosition).also { it.start() }
         // the region comes from the navigation (above); the GPS is only for the speed of the experimental driving score,
         // which no Pleos SDK reports, so its positions are ignored here
         location = LocationSource(c, { _, _ -> }, { ms, wall, speed, accuracy, now ->
@@ -329,12 +334,12 @@ object PetHub {
     private fun onOdometer(v: Float) {
         val prev = lastOdometer
         lastOdometer = v
-        if (prev == null || demoDriving) { android.util.Log.d("DrivePet", "odometer $v: first reading or demo, not counted"); return }
+        if (prev == null || demoDriving) { dlog("odometer $v: first reading or demo, not counted"); return }
         val delta = v - prev
         if (delta > 0f && delta < MAX_ODOMETER_STEP_KM) {
-            android.util.Log.d("DrivePet", "odometer $v: +$delta km counted (driving=${engine.driving})")
+            dlog("odometer $v: +$delta km counted (driving=${engine.driving})")
             engine.addDistance(delta); dexDrive(delta)
-        } else android.util.Log.d("DrivePet", "odometer $v: step $delta km ignored")
+        } else dlog("odometer $v: step $delta km ignored")
     }
 
     fun setAppVisible(v: Boolean) {
@@ -461,7 +466,7 @@ object PetHub {
     private fun onNaviPosition(lat: Double, lon: Double) {
         val before = fixRegion
         onLocation(lat, lon)
-        if (fixRegion != before) android.util.Log.d("DrivePet", "navi position: region ${fixRegion ?: "none"}")
+        if (fixRegion != before) dlog("navi position: region ${fixRegion ?: "none"}")
     }
 
     /** only the region is kept from a position */

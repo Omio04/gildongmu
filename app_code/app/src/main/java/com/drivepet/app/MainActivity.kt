@@ -396,7 +396,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun setDrawer(open: Boolean) {
         drawerOpen = open
-        pet.coveredRight = if (open && pet.width > 0) (drawerW + drawerMargin).toFloat() / pet.width else 0f   // the pet steps out from under the card
+        pet.coveredRight = 0f   // the pet stays where it is: the card slides over the room and no longer pushes the pet aside
         drawer.animate().translationX(if (open) 0f else (drawerW + drawerMargin).toFloat()).setDuration(220).start()
         if (open) scrim.visibility = View.VISIBLE
         scrim.animate().alpha(if (open) 1f else 0f).setDuration(220).withEndAction { if (!drawerOpen) scrim.visibility = View.GONE }.start()
@@ -691,14 +691,26 @@ class MainActivity : AppCompatActivity() {
     private fun askLocationOnce() {
         if (askedLocation) return
         askedLocation = true
-        if (checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(arrayOf(android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION), REQ_LOCATION)
+        val granted = android.content.pm.PackageManager.PERMISSION_GRANTED
+        val want = ArrayList<String>()
+        if (checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) != granted) {
+            want += android.Manifest.permission.ACCESS_FINE_LOCATION; want += android.Manifest.permission.ACCESS_COARSE_LOCATION
         }
+        // Android 13+: without this the "pet is running" notification of the foreground service stays hidden
+        if (android.os.Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != granted) {
+            want += android.Manifest.permission.POST_NOTIFICATIONS
+        }
+        if (want.isNotEmpty()) requestPermissions(want.toTypedArray(), REQ_LOCATION)
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == REQ_LOCATION && grantResults.any { it == android.content.pm.PackageManager.PERMISSION_GRANTED }) {
+        // only a granted LOCATION permission starts the location part (the notification answer is in the same list)
+        val locationGranted = permissions.indices.any {
+            (permissions[it] == android.Manifest.permission.ACCESS_FINE_LOCATION || permissions[it] == android.Manifest.permission.ACCESS_COARSE_LOCATION) &&
+                grantResults.getOrNull(it) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        }
+        if (requestCode == REQ_LOCATION && locationGranted) {
             startForegroundService(Intent(this, PetService::class.java))   // the service takes the location type and starts the positions
         }
     }

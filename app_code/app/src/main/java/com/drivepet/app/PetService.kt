@@ -146,11 +146,22 @@ class PetService : Service() {
         if (debuggable) b.addAction(action("데모 주행", "drive", 1)).addAction(action("데모 정차", "stop", 2)).addAction(action("데모 배고픔", "hungry_on", 3))
         val located = checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED ||
             checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
-        try {
-            startForeground(1, b.build(), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or (if (located) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0))
-        } catch (e: Exception) {
-            // the location type is refused when the service is started from the background: run without it (no region, no finds)
-            startForeground(1, b.build(), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        val notification = b.build()
+        when {
+            android.os.Build.VERSION.SDK_INT >= 34 -> try {
+                startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or (if (located) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0))
+            } catch (e: Exception) {
+                // the location type is refused when the service is started from the background: run without it (no region, no finds)
+                startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            }
+            // Android 10-13 have no "special use" type: only the location type exists
+            android.os.Build.VERSION.SDK_INT >= 29 -> try {
+                startForeground(1, notification, if (located) ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0)
+            } catch (e: Exception) {
+                startForeground(1, notification, 0)
+            }
+            // Android 9 (minSdk 28): the 3-argument call does not exist yet
+            else -> startForeground(1, notification)
         }
     }
 
