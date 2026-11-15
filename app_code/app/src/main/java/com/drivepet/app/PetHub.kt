@@ -279,8 +279,10 @@ object PetHub {
             onWiper = ::onWiper,
             onLog = { android.util.Log.d("DrivePet", it) },
         ).also { it.start() }
-        navi = NaviSource(c, onTrip = { if ((it == null) != (navTrip == null)) android.util.Log.d("DrivePet", "navi route: ${it?.destination ?: "none"}"); navTrip = it }, onTurn = { turn = it }, onLog = { android.util.Log.d("DrivePet", it) }).also { it.start() }
-        location = LocationSource(c, ::onLocation, { ms, wall, speed, accuracy, now ->
+        navi = NaviSource(c, onTrip = { if ((it == null) != (navTrip == null)) android.util.Log.d("DrivePet", "navi route: ${it?.destination ?: "none"}"); navTrip = it }, onTurn = { turn = it }, onLog = { android.util.Log.d("DrivePet", it) }, onLocation = ::onNaviPosition).also { it.start() }
+        // the region comes from the navigation (above); the GPS is only for the speed of the experimental driving score,
+        // which no Pleos SDK reports, so its positions are ignored here
+        location = LocationSource(c, { _, _ -> }, { ms, wall, speed, accuracy, now ->
             if (scoreTripActive && !demoDriving && gear == "D") scoreTracker.sample(ms, wall, speed, accuracy, now)
         }, scoreTracker::breakContinuity).also { it.start() }
         main.postDelayed(loop, 1000)
@@ -430,7 +432,7 @@ object PetHub {
     private var location: LocationSource? = null
     private var fixRegion: String? = null
     private var fixAt = 0L
-    /** demo only: pretend the car is in this region (null = use the GPS) */
+    /** demo only: pretend the car is in this region (null = use the navigation's position) */
     private var demoRegion: String? = null
 
     /** what the pet fetched during the current drive / during the last drive (for the trip card) */
@@ -443,10 +445,20 @@ object PetHub {
     private val tracker = RegionTracker()
     private val announcedAt = HashMap<String, Long>()
 
-    /** the region the car is in right now, or null (no GPS, no permission, an old position, outside Korea) */
+    /** the region the car is in right now, or null (no position from the navigation, an old position, outside Korea) */
     val regionId: String? get() = demoRegion ?: if (SystemClock.elapsedRealtime() - fixAt < FIX_STALE_MS) fixRegion else null
     val region: Region? get() = regionId?.let { Korea.region(it) }
+    /** the location permission: the experimental driving score needs it for the GPS speed (the region does not) */
     val locationAllowed: Boolean get() = location?.hasPermission() ?: false
+    /** the region comes from the navigation: the map collection works once the navigation service is connected */
+    val regionSourceReady: Boolean get() = navi?.connected == true
+
+    /** a position from the navigation (Pleos NaviHelper); logged when the region it gives changes */
+    private fun onNaviPosition(lat: Double, lon: Double) {
+        val before = fixRegion
+        onLocation(lat, lon)
+        if (fixRegion != before) android.util.Log.d("DrivePet", "navi position: region ${fixRegion ?: "none"}")
+    }
 
     /** only the region is kept from a position */
     private fun onLocation(lat: Double, lon: Double) {

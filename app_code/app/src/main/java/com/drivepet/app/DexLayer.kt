@@ -205,7 +205,7 @@ class DexLayer(context: Context, private val onClose: () -> Unit) : FrameLayout(
         val note = if (done) "이 지역을 모두 모았어요! 🎉" else "다 모으면 완성 보너스 +${Dex.REGION_BONUS}P"
         panel.addView(text(note, 13f, if (done) Color.parseColor(if (night) "#FFD27A" else "#7A5200") else sub, true).apply { setPadding(0, dp(12), 0, 0) })
         panel.addView(text("내비 길안내 중에 이 지역을 달리면 펫이 주워 와요. 처음 들어간 지역에서는 첫 1km에 꼭 하나를 주워 와요.", 11.5f, sub).apply { setPadding(0, dp(4), 0, 0); setLineSpacing(0f, 1.2f) })
-        if (!PetHub.locationAllowed) panel.addView(text("위치 권한이 없어서 지금은 주워 올 수 없어요", 12f, Color.parseColor("#C0392B"), true).apply { setPadding(0, dp(8), 0, 0) })
+        if (!PetHub.regionSourceReady) panel.addView(text("내비게이션에 연결되지 않아서 지금은 주워 올 수 없어요", 12f, Color.parseColor("#C0392B"), true).apply { setPadding(0, dp(8), 0, 0) })
     }
 }
 

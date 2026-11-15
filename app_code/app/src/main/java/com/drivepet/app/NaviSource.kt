@@ -1,5 +1,6 @@
 package com.drivepet.app
 
+import ai.pleos.playground.navi.data.CurrentLocationInfo
 import ai.pleos.playground.navi.data.DestinationInfo
 import ai.pleos.playground.navi.helper.NaviHelper
 import ai.pleos.playground.navi.helper.listener.NaviHelperEventListener
@@ -50,10 +51,16 @@ object Turns {
         if (meters >= 1000) "%.1fkm".format(meters / 1000.0) else "${(meters / 10) * 10}m"
 }
 
+/** Which positions from the navigation can be used: real numbers on the globe, and not the 0,0 a navigation sends before it knows. */
+object NaviPositions {
+    fun usable(lat: Double, lon: Double): Boolean =
+        lat.isFinite() && lon.isFinite() && lat in -90.0..90.0 && lon in -180.0..180.0 && !(lat == 0.0 && lon == 0.0)
+}
+
 /**
- * Reads the route in progress from the car's navigation through Pleos NaviHelper (read only):
- * the destination with remaining time and distance, and the next turn.
- * Permission: pleos.car.permission.NAVI_ROUTE. Without a running route nothing arrives and the pet screen shows nothing.
+ * Reads the car's navigation through Pleos NaviHelper (read only): the destination with remaining time and distance,
+ * the next turn, and where the car is (the navigation's own position, asked for every few seconds).
+ * Permission: pleos.car.permission.NAVI_ROUTE. Without a running route no destination or turn arrives.
  * Callbacks are posted to the main thread.
  */
 class NaviSource(
@@ -61,12 +68,24 @@ class NaviSource(
     private val onTrip: (NavTrip?) -> Unit,
     private val onTurn: (Turn?) -> Unit,
     private val onLog: (String) -> Unit,
+    /** where the car is, as the navigation knows it (latitude, longitude) */
+    private val onLocation: (Double, Double) -> Unit = { _, _ -> },
 ) {
     private val helper = NaviHelper(context.applicationContext)
     private val main = Handler(Looper.getMainLooper())
-    private var ready = false
+    @Volatile private var ready = false
+
+    /** true once the navigation service answered: from then on positions and route information can arrive */
+    val connected: Boolean get() = ready
 
     private val listener = object : NaviHelperEventListener {
+        // the answer to getCurrentLocationInfo(): the navigation's own position
+        override fun onCurrentLocationInfo(info: CurrentLocationInfo) {
+            val lat = info.latitude
+            val lon = info.longitude
+            if (NaviPositions.usable(lat, lon)) main.post { onLocation(lat, lon) }
+        }
+
         override fun onDestinationInfo(info: DestinationInfo) {
             main.post { onTrip(NavTrip(info.name ?: "", info.remainTime / 60, info.remainDistance / 1000.0)) }
         }
@@ -93,6 +112,7 @@ class NaviSource(
                     helper.addListener(listener)
                     helper.getDestinationInfo()
                     helper.getTBTInfo()
+                    helper.getCurrentLocationInfo()
                 },
                 onFailed = { main.post { onLog("navi failed: ${it.message}") } },
             )
@@ -101,10 +121,10 @@ class NaviSource(
         }
     }
 
-    /** The remaining distance and the next turn change as the car moves: ask again every few seconds. */
+    /** The remaining distance, the next turn and the position change as the car moves: ask again every few seconds. */
     fun refresh() {
         if (!ready) return
-        try { helper.getDestinationInfo(); helper.getTBTInfo() } catch (_: Exception) {}
+        try { helper.getDestinationInfo(); helper.getTBTInfo(); helper.getCurrentLocationInfo() } catch (_: Exception) {}
     }
 
     /** Demo only: starts a guidance so the emulator has a route to read. Needs pleos.car.permission.NAVI_ROUTE_SEARCH (debug build). */

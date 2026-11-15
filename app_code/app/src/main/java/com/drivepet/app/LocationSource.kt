@@ -8,7 +8,8 @@ import android.location.LocationListener
 import android.location.LocationManager
 
 /**
- * Transient positions identify the region; fresh GPS speed with reported accuracy feeds the experimental score.
+ * Fresh GPS speed with reported accuracy feeds the experimental score (no Pleos SDK reports the car's speed).
+ * In this build the region comes from the navigation (NaviSource, Pleos NaviHelper), so PetHub passes a no-op [onFix].
  * Coordinates and individual speed samples are never stored or sent. Network positions never supply speed.
  */
 class LocationSource(
