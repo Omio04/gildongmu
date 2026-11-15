@@ -34,6 +34,7 @@ class DriveRecordLayer(context: Context, private val onClose: () -> Unit) : Fram
     private var columns = 6
 
     private val statsRow = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
+    private val drivingScoreCard = DrivingScoreCard(context)
     private val monthTitle = title("", 27f)
     private val prev = ChevronButton(context, true)
     private val next = ChevronButton(context, false)
@@ -72,7 +73,7 @@ class DriveRecordLayer(context: Context, private val onClose: () -> Unit) : Fram
             addView(title("운전 기록", 27f), lp(-2, -2).apply { leftMargin = dp(10f) })
         }
         val info = TextView(context).apply {
-            text = "깜빡이 사용 점수란?"
+            text = "점수 기준"
             minHeight = dp(54f)
             kit.key(this, Kit.KEY_SECONDARY, 18f, 20f, 8f)
             setOnClickListener { showInfo() }
@@ -146,6 +147,8 @@ class DriveRecordLayer(context: Context, private val onClose: () -> Unit) : Fram
 
         val left = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
+            addView(drivingScoreCard, lp(-1, -2))
+            addView(text("깜빡이 습관 기록 · 아래 달력과 배지는 깜빡이 기준이에요", 17f, Look.SUB, true), lp(-1, -2).apply { topMargin = dp(16f); bottomMargin = dp(8f) })
             addView(statsRow, lp(-1, -2))
             addView(calendarCard, lp(-1, -2).apply { topMargin = dp(14f) })
             addView(badgeCard, lp(-1, -2).apply { topMargin = dp(14f) })
@@ -226,6 +229,7 @@ class DriveRecordLayer(context: Context, private val onClose: () -> Unit) : Fram
     }
 
     private fun renderStats() {
+        drivingScoreCard.render(PetHub.drivingScore(today), PetHub.showingScoreDemo, PetHub.officialScoreProvider.latest())
         val s = PetHub.driveLog.stats(today, month)
         val waiting = "기록이 쌓이면 보여요"
         fun score(v: Int?): CharSequence = if (v == null) "–" else withUnit("$v", "점")
@@ -406,7 +410,7 @@ class DriveRecordLayer(context: Context, private val onClose: () -> Unit) : Fram
         n.addRow(kv("덜컹 브레이크 (급제동 추정)", "${rec.jerky}번"))
         n.addRow(kv("급한 핸들 (급조향)", "${rec.harsh}번"))
         detail.addView(n, lp(-1, -2))
-        detail.addView(text("차가 속도·가속도를 알려 주지 않아서, 브레이크를 짧게 여러 번 밟은 것과 핸들을 빠르게 돌린 것으로 짐작한 값이에요.", 13.5f, Look.SUB).apply {
+        detail.addView(text("브레이크 반복 입력과 핸들 움직임으로 짐작한 참고 기록이에요. 위 GPS 기반 추정 점수의 급감속과는 별개예요.", 13.5f, Look.SUB).apply {
             setLineSpacing(0f, 1.3f); setPadding(dp(6f), dp(8f), dp(6f), 0)
         })
 
@@ -550,34 +554,22 @@ class DriveRecordLayer(context: Context, private val onClose: () -> Unit) : Fram
 
     private fun monthOf(day: Int) = day / 100 % 100
 
-    /** what the score is and why it is not called a safe-driving score */
+    /** Experimental score and legacy signal metric are deliberately explained separately. */
     private fun showInfo() {
         val card = popupCard().apply {
             gravity = Gravity.START
-            addView(title("깜빡이 사용 점수란?", 28f))
-            addView(text("회전할 때 깜빡이를 켠 비율로 그날의 점수를 매겨요. 핸들을 45° 넘게 돌리면 회전 한 번으로 세요.", 18f, Look.INK).apply { setLineSpacing(0f, 1.3f) },
-                lp(-1, -2).apply { topMargin = dp(12f) })
-            addView(title("점수 = 깜빡이를 켠 회전 ÷ 전체 회전 × 100", 19f, Look.PERI_DEEP).apply {
-                setPadding(dp(16f), dp(10f), dp(16f), dp(10f))
-                background = kit.card(16f, Look.PERI_L, 0xFFC9D6F6.toInt(), 1.2f)
-            }, lp(-2, -2).apply { topMargin = dp(14f) })
-            addView(LinearLayout(context).apply {
-                orientation = LinearLayout.HORIZONTAL
-                addView(legendChip(Bands.GOOD, "90~100점"))
-                addView(legendChip(Bands.FAIR, "70~89점"), lp(-2, -2).apply { leftMargin = dp(8f) })
-                addView(legendChip(Bands.LOW, "0~69점"), lp(-2, -2).apply { leftMargin = dp(8f) })
-                addView(legendChip(Bands.NONE, "점수 없음"), lp(-2, -2).apply { leftMargin = dp(8f) })
-            }, lp(-2, -2).apply { topMargin = dp(14f) })
+            addView(title("운전펫 추정 점수", 27f))
+            addView(text("블루링크의 공개 평가 항목을 참고했어요. 공식 계산식과 다른 자체 실험 기준이며, 공식 점수·보험 점수로 사용할 수 없어요.", 17f, Look.INK))
             addView(text(
-                "· 0.5km보다 짧은 주행은 기록하지 않아요.\n" +
-                    "· 운전하지 않은 날은 빈칸, 운전했지만 회전이 ${DriveLog.MIN_TURNS}번보다 적었던 날은 점수 없이 회색이에요(한두 번 운으로 0점이나 100점이 나오지 않게).\n" +
-                    "· 평균은 날짜별 점수를 평균내지 않고, 그 기간의 모든 회전 중 깜빡이를 켠 비율이에요. 많이 달린 날이 더 크게 반영돼요.\n" +
-                    "· 덜컹 브레이크와 급한 핸들은 차가 속도·가속도를 알려 주지 않아 짐작한 값이라, 점수에 넣지 않고 참고 기록으로만 보여줘요.\n" +
-                    "· 현대자동차·TMAP의 안전운전 점수는 이 앱에서 쓸 수 있는 공개 연동이 없어서, 정확히 잴 수 있는 깜빡이로만 점수를 매겨요. 그래서 '안전운전 점수'가 아니라 '깜빡이 사용 점수'라고 불러요.",
-                16f, Look.SUB).apply { setLineSpacing(0f, 1.4f) }, lp(-1, -2).apply { topMargin = dp(16f) })
-            addView(closeKey(), lp(-2, -2).apply { topMargin = dp(20f); gravity = Gravity.CENTER_HORIZONTAL })
+                "최근 90일 · 측정 10km, 10분, 속도 수신율 80% 이상부터 표시해요. GPS 속도를 사용하며 정확도가 부족하거나 끊긴 구간은 평가하지 않아요.\n\n" +
+                "급가속: 오차를 뺀 가속도 3.0m/s² 이상\n급감속: 오차를 뺀 감속도 3.5m/s² 이상\n급출발: 10km/h 이하에서 급가속 (중복 집계 안 함)\n심야: 한국 시간 23~05시 이동 시간\n\n" +
+                "100점에서 차감해요: 100km당 급가속·급감속·급출발 횟수 × 2점 (각 최대 35·35·20점), 심야 시간 비율 × 10점. 임계값·가중치는 운전펫 자체 기준 v1이며 실차 검증 전이에요. 심야주행 자체가 위험 운전을 뜻하지는 않아요.\n\n" +
+                "아래 달력·배지는 기존 깜빡이 습관 기록이에요. 핸들 45° 회전 중 깜빡이를 켠 비율이며 3회 미만은 점수를 매기지 않아요. 브레이크 반복 입력과 급조향은 새 추정 점수에 넣지 않아요.\n\n" +
+                "블루링크 공식 점수는 현재 미연동이에요. 향후 이용 권한·사용자 동의를 확보하면 별도 출처와 기준일을 표시해 연결할 계획이에요.",
+                16f, Look.SUB).apply { setLineSpacing(0f, 1.25f) }, lp(-1, -2).apply { topMargin = dp(12f) })
+            addView(closeKey(), lp(-2, -2).apply { topMargin = dp(16f); gravity = Gravity.CENTER_HORIZONTAL })
         }
-        openPopup(card)
+        openPopup(ScrollView(context).apply { addView(card) })
     }
 
     // ---------------------------------------------------------------- small builders

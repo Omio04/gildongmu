@@ -8,11 +8,15 @@ import android.location.LocationListener
 import android.location.LocationManager
 
 /**
- * Where the car is, only to find out which 시·도 it is in (the map collection). The position itself is never stored or sent:
- * [onFix] hands it to [PetHub], which keeps only the region id. Uses the platform's GPS (and the network position if that is
- * all there is). Without the location permission nothing happens and the map collection simply does not find anything.
+ * Transient positions identify the region; fresh GPS speed with reported accuracy feeds the experimental score.
+ * Coordinates and individual speed samples are never stored or sent. Network positions never supply speed.
  */
-class LocationSource(private val ctx: Context, private val onFix: (Double, Double) -> Unit) : LocationListener {
+class LocationSource(
+    private val ctx: Context,
+    private val onFix: (Double, Double) -> Unit,
+    private val onSpeed: (Long, Long, Double, Double, Long) -> Unit,
+    private val onSpeedMissing: () -> Unit,
+) : LocationListener {
     private val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
     private var running = false
 
@@ -29,7 +33,8 @@ class LocationSource(private val ctx: Context, private val onFix: (Double, Doubl
             var any = false
             for (p in listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)) {
                 if (m.isProviderEnabled(p)) {
-                    m.requestLocationUpdates(p, UPDATE_MS, MIN_METERS, this, ctx.mainLooper)
+                    m.requestLocationUpdates(p, if (p == LocationManager.GPS_PROVIDER) 1000L else 30_000L,
+                        if (p == LocationManager.GPS_PROVIDER) 0f else 30f, this, ctx.mainLooper)
                     m.getLastKnownLocation(p)?.let { if (System.currentTimeMillis() - it.time < 2 * 60_000L) onFix(it.latitude, it.longitude) }
                     any = true
                 }
@@ -45,13 +50,15 @@ class LocationSource(private val ctx: Context, private val onFix: (Double, Doubl
         running = false
     }
 
-    override fun onLocationChanged(l: Location) { onFix(l.latitude, l.longitude) }
+    override fun onLocationChanged(l: Location) {
+        onFix(l.latitude, l.longitude)
+        if (l.provider != LocationManager.GPS_PROVIDER) return
+        @Suppress("DEPRECATION") val mock = l.isFromMockProvider
+        if (mock || !l.hasSpeed() || !l.hasSpeedAccuracy()) { onSpeedMissing(); return }
+        onSpeed(l.elapsedRealtimeNanos / 1_000_000L, l.time, l.speed.toDouble(),
+            l.speedAccuracyMetersPerSecond.toDouble(), android.os.SystemClock.elapsedRealtime())
+    }
     @Deprecated("Deprecated in Java") override fun onStatusChanged(provider: String?, status: Int, extras: android.os.Bundle?) {}
     override fun onProviderEnabled(provider: String) {}
-    override fun onProviderDisabled(provider: String) {}
-
-    private companion object {
-        const val UPDATE_MS = 5_000L
-        const val MIN_METERS = 30f
-    }
+    override fun onProviderDisabled(provider: String) { if (provider == LocationManager.GPS_PROVIDER) onSpeedMissing() }
 }

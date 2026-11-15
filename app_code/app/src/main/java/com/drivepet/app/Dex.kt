@@ -170,6 +170,44 @@ object Korea {
     }
 }
 
+/**
+ * Which region the car counts as being in. A GPS position alone is not enough at a border: a road that runs along one (the
+ * ring road round Seoul, a bridge over a boundary river) would flip the region with every fix. So:
+ *  - the first region seen counts at once;
+ *  - a different region counts only after the positions have stayed in it for [confirmMs] (and at least two fixes), about
+ *    10 seconds, which is 150 to 300 m of driving. Dipping over the line and back within that time changes nothing;
+ *  - "no region" (far out at sea, outside Korea) counts only after [lostMs]; a tunnel sends no positions at all, and then the
+ *    last region simply stays (the caller forgets it when the last fix is too old).
+ * Leaving a region and coming back is nothing special: the collection keeps what was found, and the welcome gift of a region
+ * (its first kilometre always finds something) is given only the first time ever (see [Dex.enter]).
+ * Pure logic, no Android.
+ */
+class RegionTracker(private val confirmMs: Long = CONFIRM_MS, private val lostMs: Long = LOST_MS) {
+    var current: String? = null
+        private set
+    private var pending = false
+    private var candidate: String? = null
+    private var since = 0L
+    private var fixes = 0
+
+    /** a new position, already turned into a region id (or null). Returns the region the car has just entered, or null */
+    fun onFix(regionId: String?, nowMs: Long): String? {
+        if (regionId == current) { pending = false; return null }
+        if (!pending || candidate != regionId) { pending = true; candidate = regionId; since = nowMs; fixes = 1 } else fixes++
+        val need = when { regionId == null -> lostMs; current == null -> 0L; else -> confirmMs }
+        if (nowMs - since < need || (need > 0L && fixes < 2)) return null
+        current = regionId; pending = false
+        return regionId
+    }
+
+    fun reset() { current = null; pending = false }
+
+    companion object {
+        const val CONFIRM_MS = 10_000L
+        const val LOST_MS = 60_000L
+    }
+}
+
 /** one thing the pet brought back */
 data class Find(val item: DexItem, val isNew: Boolean, val points: Int, val regionDone: Boolean, val allDone: Boolean)
 

@@ -288,49 +288,38 @@ object Pics {
         ink.circle(cv, cx + s * 0.8f, cy + s * 0.08f, s * 0.1f, 0xFFFFF6D2.toInt())
     }
 
-    /** the bear's head, front view, for the menu portrait and the small icons */
+    /** the low-energy mark: a fuel pump (a battery for an electric car) with a red, nearly empty level, on a white disc */
+    fun energy(cv: Canvas, ink: Ink, cx: Float, cy: Float, r: Float, battery: Boolean) {
+        val ow = max(1.4f, r * 0.1f)
+        ink.circle(cv, cx, cy + r * 0.08f, r, 0x33603C1C)
+        ink.circle(cv, cx, cy, r, Look.WHITE); ink.circleOutline(cv, cx, cy, r, Look.COCOA, ow)
+        ink.fill.shader = null
+        ink.line.color = Look.COCOA; ink.line.strokeWidth = ow * 0.9f
+        val red = 0xFFE5533D.toInt()
+        if (battery) {
+            ink.rect.set(cx - r * 0.56f, cy - r * 0.32f, cx + r * 0.42f, cy + r * 0.32f)
+            ink.fill.color = 0xFFFFF9F1.toInt(); cv.drawRoundRect(ink.rect, r * 0.1f, r * 0.1f, ink.fill); cv.drawRoundRect(ink.rect, r * 0.1f, r * 0.1f, ink.line)
+            ink.fill.color = Look.COCOA; cv.drawRect(cx + r * 0.42f, cy - r * 0.13f, cx + r * 0.56f, cy + r * 0.13f, ink.fill)
+            ink.fill.color = red; cv.drawRect(cx - r * 0.46f, cy - r * 0.22f, cx - r * 0.2f, cy + r * 0.22f, ink.fill)
+        } else {
+            ink.rect.set(cx - r * 0.5f, cy - r * 0.54f, cx + r * 0.1f, cy + r * 0.54f)
+            ink.fill.color = 0xFFFFF9F1.toInt(); cv.drawRoundRect(ink.rect, r * 0.1f, r * 0.1f, ink.fill); cv.drawRoundRect(ink.rect, r * 0.1f, r * 0.1f, ink.line)
+            ink.fill.color = 0xFFBFD1F7.toInt(); cv.drawRect(cx - r * 0.38f, cy - r * 0.42f, cx - r * 0.02f, cy - r * 0.12f, ink.fill)
+            ink.fill.color = red; cv.drawRect(cx - r * 0.38f, cy + r * 0.24f, cx - r * 0.02f, cy + r * 0.42f, ink.fill)
+            ink.path.reset(); ink.path.moveTo(cx + r * 0.1f, cy + r * 0.28f); ink.path.lineTo(cx + r * 0.4f, cy + r * 0.28f)
+            ink.path.lineTo(cx + r * 0.4f, cy - r * 0.2f); ink.path.lineTo(cx + r * 0.26f, cy - r * 0.38f)
+            cv.drawPath(ink.path, ink.line)
+        }
+    }
+
+    private val petPainter by lazy { PetPainter() }
+
+    /** the bear's head, front view, for the menu portrait and the small icons (the designer's grown bear, see [PetPainter]) */
     fun bearHead(cv: Canvas, ink: Ink, cx: Float, cy: Float, r: Float, st: PetState) {
-        val col = Look.body(st); val ow = max(1.2f, r * 0.07f)
-        for (sg in intArrayOf(-1, 1)) {
-            ink.circle(cv, cx + sg * r * 0.6f, cy - r * 0.62f, r * 0.27f, col.base); ink.circleOutline(cv, cx + sg * r * 0.6f, cy - r * 0.62f, r * 0.27f, Look.COCOA, ow)
-            ink.circle(cv, cx + sg * r * 0.6f, cy - r * 0.65f, r * 0.13f, Look.EAR_IN)
-        }
-        ink.rect.set(cx - r * 0.98f, cy + r * 0.05f - r * 0.78f, cx + r * 0.98f, cy + r * 0.05f + r * 0.78f)
-        ink.fill.color = OPAQUE; ink.fill.shader = RadialGradient(cx - r * 0.3f, cy - r * 0.35f, r * 1.35f, intArrayOf(col.light, col.base, col.shade), floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.CLAMP)
-        cv.drawOval(ink.rect, ink.fill); ink.fill.shader = null
-        ink.line.color = Look.COCOA; ink.line.strokeWidth = ow; cv.drawOval(ink.rect, ink.line)
-        val ey = cy + r * 0.02f; val ex = r * 0.36f; val er = r * 0.1f
-        val blush = if (st == PetState.ANGRY) 0xFFF26A5E.toInt() else Look.BLUSH
-        for (sg in intArrayOf(-1, 1)) {
-            val x = cx + sg * r * 0.62f; val y = ey + r * 0.26f
-            ink.fill.color = OPAQUE; ink.fill.shader = RadialGradient(x, y, r * 0.2f, intArrayOf(Look.alpha(blush, 0.85f), Look.alpha(blush, 0f)), null, Shader.TileMode.CLAMP)
-            ink.rect.set(x - r * 0.2f, y - r * 0.15f, x + r * 0.2f, y + r * 0.15f); cv.drawOval(ink.rect, ink.fill); ink.fill.shader = null
-        }
-        ink.line.color = Look.COCOA; ink.line.strokeWidth = r * 0.085f
-        ink.fill.color = Look.COCOA
-        when (st) {
-            PetState.NORMAL -> {
-                for (sg in intArrayOf(-1, 1)) { ink.rect.set(cx + sg * ex - er * 1.3f, ey + er * 0.8f - er * 1.3f, cx + sg * ex + er * 1.3f, ey + er * 0.8f + er * 1.3f); cv.drawArc(ink.rect, 212f, 116f, false, ink.line) }
-                ink.line.strokeWidth = r * 0.07f; ink.rect.set(cx - r * 0.13f, ey + r * 0.14f - r * 0.13f, cx + r * 0.13f, ey + r * 0.14f + r * 0.13f); cv.drawArc(ink.rect, 32f, 116f, false, ink.line)
-            }
-            PetState.ANGRY -> {
-                for (sg in intArrayOf(-1, 1)) { cv.drawCircle(cx + sg * ex, ey, er, ink.fill); cv.drawLine(cx + sg * (ex + er * 1.6f), ey - er * 2.3f, cx + sg * (ex - er * 1.4f), ey - er * 1.3f, ink.line) }
-                ink.line.strokeWidth = r * 0.07f; ink.rect.set(cx - r * 0.12f, ey + r * 0.46f - r * 0.12f, cx + r * 0.12f, ey + r * 0.46f + r * 0.12f); cv.drawArc(ink.rect, 216f, 108f, false, ink.line)
-            }
-            PetState.HUNGRY -> {
-                for (sg in intArrayOf(-1, 1)) { cv.drawCircle(cx + sg * ex, ey, er, ink.fill); cv.drawLine(cx + sg * (ex + er * 1.3f), ey - er * 1.4f, cx + sg * (ex - er * 1.4f), ey - er * 2.3f, ink.line) }
-                ink.oval(cv, cx, ey + r * 0.36f, r * 0.08f, r * 0.1f, 0xFFB5525A.toInt()); ink.ovalOutline(cv, cx, ey + r * 0.36f, r * 0.08f, r * 0.1f, Look.COCOA, ow * 0.6f)
-            }
-            PetState.HURT -> {
-                for (sg in intArrayOf(-1, 1)) { val x = cx + sg * ex; ink.path.reset(); ink.path.moveTo(x - sg * er, ey - er); ink.path.lineTo(x + sg * er, ey); ink.path.lineTo(x - sg * er, ey + er); cv.drawPath(ink.path, ink.line) }
-                ink.line.strokeWidth = r * 0.07f; ink.rect.set(cx - r * 0.12f, ey + r * 0.44f - r * 0.12f, cx + r * 0.12f, ey + r * 0.44f + r * 0.12f); cv.drawArc(ink.rect, 216f, 108f, false, ink.line)
-                ink.rect.set(cx - r * 0.62f, cy - r * 0.78f, cx - r * 0.12f, cy - r * 0.56f)
-                cv.save(); cv.rotate(-20f, ink.rect.centerX(), ink.rect.centerY())
-                ink.fill.color = 0xFFF7E7CB.toInt(); cv.drawRoundRect(ink.rect, r * 0.06f, r * 0.06f, ink.fill)
-                ink.line.color = Look.COCOA; ink.line.strokeWidth = ow * 0.6f; cv.drawRoundRect(ink.rect, r * 0.06f, r * 0.06f, ink.line)
-                cv.restore()
-            }
-        }
+        val u = r * 0.95f
+        cv.save(); cv.translate(cx, cy + r * 0.04f); cv.scale(u, u)
+        petPainter.head(cv, st, max(1.2f / u, 0.05f))
+        cv.restore()
     }
 
     /** the round map pin */

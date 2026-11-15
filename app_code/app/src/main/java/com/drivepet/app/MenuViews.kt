@@ -178,7 +178,7 @@ class ItemThumb(context: Context, private val id: String) : View(context) {
         when (id) {
             "straw", "beret", "crown" -> unit(if (id == "crown") 0.8f else if (id == "beret") 0.68f else 0.62f, -2.2f * k) { ow -> pet.hat(cv, id, ow) }
             "sun", "round" -> unit(0.73f, -1.29f * k) { ow -> pet.glasses(cv, id, false, ow) }
-            "jeans", "shorts" -> unit(0.62f, if (id == "jeans") -0.35f * k else -0.44f * k) { ow -> pet.pants(cv, id, ow, false) }
+            "jeans", "shorts" -> unit(0.5f, 0f) { ow -> pet.pantsIcon(cv, id, ow) }
             "plant" -> room.plant(cv, cx, s * 0.9f, s * 0.19f)
             "clock" -> { room.clockFace(cv, cx, cy, s * 0.3f); room.clockHands(cv, cx, cy, s * 0.3f, 10f + 10f / 60f, 10f) }
             "picture" -> room.picture(cv, cx - s * 0.24f, cy - s * 0.2f, s * 0.48f, s * 0.4f)

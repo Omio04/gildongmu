@@ -151,6 +151,7 @@ class MainActivity : AppCompatActivity() {
         super.onStart()
         PetHub.reactionListeners += reactionL
         PetHub.tickListeners += tickL
+        PetHub.alertListeners += alertL
         PetHub.setAppVisible(true)
         refresh()
         showPendingTrip()
@@ -162,6 +163,7 @@ class MainActivity : AppCompatActivity() {
         closeGame(); closeDex(); closeRecord()
         PetHub.reactionListeners -= reactionL
         PetHub.tickListeners -= tickL
+        PetHub.alertListeners -= alertL
         PetHub.setAppVisible(false)   // the service now shows the small floating pet
         super.onStop()
     }
@@ -214,7 +216,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun obLine(): String = when (obStep) {
         0 -> "안녕! 나는 앞으로 너의 길동무가 되어줄 친구야."
-        1 -> "안전하게 운전할수록 운전 점수가 쌓이고, 그 점수가 포인트가 돼."
+        1 -> "운전 습관을 함께 기록하고 포인트로 나를 꾸며 줘. 운전펫 추정 점수도 확인할 수 있어."
         2 -> "그 포인트로 상점에서 옷이랑 방 소품을 사서 나를 꾸며 줄 수 있어."
         3 -> if (obName == null) "그런데 나는 아직 이름이 없어. 내 이름을 지어줄래?" else "‘${obName}’ 어때? 마음에 들면 아래 버튼을 눌러 줘."
         else -> "${obName}! 마음에 쏙 들어. 이제부터 같이 달려 보자!"
@@ -276,6 +278,8 @@ class MainActivity : AppCompatActivity() {
 
     /** the pet speaks: the words appear in a bubble beside it and move with it (this screen only) */
     private fun say(s: String) { pet.say(s) }
+    /** a notice from the car while the pet's own screen is open: the pet says it */
+    private val alertL: (PetAlert) -> Unit = { a -> say(a.title + (if (a.icon == AlertIcon.PIN) "" else "  " + a.sub)); if (a.icon != AlertIcon.PIN) pet.burst(false) }
 
     // ---------------------------------------------------------------- the result of the last drive
 
@@ -324,7 +328,8 @@ class MainActivity : AppCompatActivity() {
         val st = PetHub.petState
         pet.state = st
         pet.level = s.level
-        pet.outfit = PetHub.outfit; pet.furniture = PetHub.furniture; pet.stage = s.stage
+        pet.outfit = PetHub.outfit; pet.furniture = PetHub.furniture; pet.stage = s.stage; pet.eggAwake = GrowthStage.eggAwake(s.totalKm)
+        pet.energyBadge = if (PetHub.hungry) (if (PetHub.usesBattery) 2 else 1) else 0
 
         val name = PetHub.petName
         hudLevel.text = levelLine(name, s.level)
@@ -380,6 +385,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun setDrawer(open: Boolean) {
         drawerOpen = open
+        pet.coveredRight = if (open && pet.width > 0) (drawerW + drawerMargin).toFloat() / pet.width else 0f   // the pet steps out from under the card
         drawer.animate().translationX(if (open) 0f else (drawerW + drawerMargin).toFloat()).setDuration(220).start()
         if (open) scrim.visibility = View.VISIBLE
         scrim.animate().alpha(if (open) 1f else 0f).setDuration(220).withEndAction { if (!drawerOpen) scrim.visibility = View.GONE }.start()
@@ -451,7 +457,8 @@ class MainActivity : AppCompatActivity() {
         val grow = group()
         if (PetHub.petName.isNotEmpty()) grow.addRow(kv("이름", PetHub.petName))
         grow.addRow(kv("성장 단계", s.stage.label))
-        GrowthStage.kmToNext(s.totalKm)?.let { grow.addRow(kv("다음 단계까지", "%.0fkm".format(it))) }
+        if (!GrowthStage.eggAwake(s.totalKm)) grow.addRow(kv("알이 깨어나기까지", "%.0fkm".format(GrowthStage.EGG_WAKES_KM - s.totalKm)))
+        else GrowthStage.kmToNext(s.totalKm)?.let { grow.addRow(kv("다음 단계까지", "%.0fkm".format(it))) }
         grow.addRow(kv("레벨", "Lv.${s.level}"))
         grow.addRow(kv("다음 레벨까지", "${PetEngine.XP_PER_LEVEL - s.xpIntoLevel}"))
         grow.addRow(kv("오늘 함께한 거리", "%.1fkm".format(s.todayKm)))
@@ -460,6 +467,17 @@ class MainActivity : AppCompatActivity() {
         grow.addRow(kv("지금까지 모은 포인트", "${s.earnedPoints}P"))
         grow.addRow(kv("지금 가진 포인트", "${s.points}P"))
         infoPage.addView(grow, LinearLayout.LayoutParams(-1, -2))
+        // what the pet reads from the car right now (Pleos Vehicle SDK and NaviHelper, all read only)
+        infoPage.addView(heading("차에서 읽는 값"))
+        val car = group()
+        car.addRow(kv("기어", PetHub.gear))
+        car.addRow(kv(if (PetHub.usesBattery) "배터리" else "연료", PetHub.energyPercent?.let { "$it%" + if (PetHub.hungry) " · 부족해요" else "" } ?: "알 수 없음"))
+        car.addRow(kv("주행 가능 거리", PetHub.rangeKm?.let { "약 ${it}km" } ?: "알 수 없음"))
+        car.addRow(kv("운전석 안전벨트", when (PetHub.beltOn) { true -> "맸어요"; false -> "안 맸어요"; null -> "알 수 없음" }))
+        car.addRow(kv("와이퍼", if (PetHub.wiperOn) "켜짐 · 비가 와요" else "꺼짐"))
+        car.addRow(kv("지금 지역", PetHub.region?.name ?: "알 수 없음"))
+        car.addRow(kv("내비 경로", PetHub.navTrip?.let { "${it.destination} · ${"%.0f".format(it.remainKm)}km 남음" } ?: "없음"))
+        infoPage.addView(car, LinearLayout.LayoutParams(-1, -2))
         infoPage.addView(heading("운전 기록"))
         val drive = group()
         drive.addRow(kv("깜빡이를 켠 회전", "${s.goodSignals}번"))
@@ -725,7 +743,8 @@ class MainActivity : AppCompatActivity() {
             val first = log.days.first().day; val last = log.days.last().day
             "${log.size}일의 기록이 이 차에 저장돼 있어요 (%d.%02d.%02d ~ %d.%02d.%02d).".format(first / 10000, first / 100 % 100, first % 100, last / 10000, last / 100 % 100, last % 100)
         }
-        val can = !log.isEmpty
+        if (PetHub.drivingHistory.size > 0) recordKept.append("\n추정 점수용 주행 기록 ${PetHub.drivingHistory.size}회도 저장돼 있어요.")
+        val can = !log.isEmpty || PetHub.drivingHistory.size > 0 || PetHub.showingScoreDemo
         if (recordDelete.isEnabled != can) {
             recordDelete.isEnabled = can
             kit.key(recordDelete, if (can) Kit.KEY_SECONDARY else Kit.KEY_QUIET, 19f, 14f, 8f)

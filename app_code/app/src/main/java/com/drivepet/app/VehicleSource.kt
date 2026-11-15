@@ -1,7 +1,15 @@
 package com.drivepet.app
 
 import ai.pleos.playground.vehicle.Vehicle
+import ai.pleos.playground.vehicle.api.model.area.SeatArea
+import ai.pleos.playground.vehicle.api.model.area.WindowArea
+import ai.pleos.playground.vehicle.constant.area.SeatValue
 import ai.pleos.playground.vehicle.constant.area.TurnSignalValue
+import ai.pleos.playground.vehicle.constant.area.WindowValue
+import ai.pleos.playground.vehicle.constant.control.WiperState
+import ai.pleos.playground.vehicle.listener.RangeRemainingListener
+import ai.pleos.playground.vehicle.listener.SeatBeltBuckledStateListener
+import ai.pleos.playground.vehicle.listener.WiperStateListener
 import ai.pleos.playground.vehicle.constant.control.VehicleGear
 import ai.pleos.playground.vehicle.listener.BrakePedalStatusListener
 import ai.pleos.playground.vehicle.listener.DistanceDrivenListener
@@ -15,8 +23,10 @@ import android.os.Handler
 import android.os.Looper
 
 /**
- * Pleos Vehicle SDK, read only: gear, turn signal, steering wheel angle, brake pedal.
- * Permissions: pleos.car.permission.CAR_DRIVE (gear, steering, brake) and CAR_LIGHTS (turn signal).
+ * Pleos Vehicle SDK, read only: gear, turn signal, steering wheel angle, brake pedal, odometer, fuel and battery,
+ * the distance the car can still go, the driver's seat belt and the windscreen wiper.
+ * Permissions: pleos.car.permission.CAR_DRIVE (gear, steering, brake), CAR_LIGHTS (turn signal), CAR_ENERGY (fuel, battery),
+ * CAR_SEATS (seat belt) and CAR_WINDOWS (wiper). Nothing in the car is ever set or moved by this app.
  * Every callback is posted to the main thread, so the pet engine only ever runs on one thread.
  */
 class VehicleSource(
@@ -28,6 +38,9 @@ class VehicleSource(
     private val onDistance: (Float) -> Unit,   // the odometer reading; the unit is assumed to be km (NOT verified on a car)
     private val onFuel: (Int) -> Unit,         // fuel percent
     private val onBattery: (Int) -> Unit,      // EV battery state of charge, percent
+    private val onRange: (Float) -> Unit,      // how far the car can still go, as the car reports it (see PetHub.onRange for the unit)
+    private val onSeatBelt: (Boolean) -> Unit, // the driver's seat belt is buckled
+    private val onWiper: (Boolean) -> Unit,    // the windscreen wiper is running
     private val onLog: (String) -> Unit,
 ) {
     private val vehicle = Vehicle(context.applicationContext)
@@ -105,6 +118,30 @@ class VehicleSource(
             vehicle.getEvBattery().registerEvBatteryStateOfCharge(object : EvBatteryStateOfChargeListener {
                 override fun onEvBatteryStateOfChargeUpdated(percent: Int?) { if (percent != null) ui { onBattery(percent) } }
                 override fun onFailed(e: Exception) { fail("battery listener", e) }
+            })
+        }
+        guard("range") {
+            vehicle.getOdometer().getRangeRemainingDistance({ d -> if (d != null) ui { onLog("range remaining = $d"); onRange(d) } }, { fail("range read", it) })
+            vehicle.getOdometer().registerRangeRemainingListener(object : RangeRemainingListener {
+                override fun onRangeRemainingChanged(distance: Float?) { if (distance != null) ui { onRange(distance) } }
+                override fun onFailed(e: Exception) { fail("range listener", e) }
+            })
+        }
+        // the driver's seat (row 1 left: left-hand-drive cars, as sold in Korea)
+        guard("seat belt") {
+            val driver = SeatArea(SeatValue.ROW_1_LEFT)
+            vehicle.getSeat().getCurrentSeatBeltBuckledState(driver, { b -> if (b != null) ui { onLog("seat belt buckled = $b"); onSeatBelt(b) } }, { fail("seat belt read", it) })
+            vehicle.getSeat().registerSeatBeltBuckledState(driver, object : SeatBeltBuckledStateListener {
+                override fun onSeatBeltBuckledStateUpdated(buckled: Boolean?) { if (buckled != null) ui { onSeatBelt(buckled) } }
+                override fun onFailed(e: Exception) { fail("seat belt listener", e) }
+            })
+        }
+        guard("wiper") {
+            val front = WindowArea(WindowValue.FRONT_WINDSHIELD)
+            vehicle.getWiper().getCurrentWiperState(front, { s -> ui { onLog("wiper = $s"); onWiper(s == WiperState.ON) } }, { fail("wiper read", it) })
+            vehicle.getWiper().registerWiperState(front, object : WiperStateListener {
+                override fun onWiperStateUpdated(state: WiperState?) { ui { onWiper(state == WiperState.ON) } }
+                override fun onFailed(e: Exception) { fail("wiper listener", e) }
             })
         }
         guard("brake") {

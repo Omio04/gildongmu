@@ -4,13 +4,15 @@
     <!-- Pleos Vehicle SDK, read only. Nothing is ever set on the car. -->
     <uses-permission android:name="pleos.car.permission.CAR_DRIVE" />   <!-- brake pedal, steering angle, gear -->
     <uses-permission android:name="pleos.car.permission.CAR_LIGHTS" />  <!-- turn signal -->
+    <uses-permission android:name="pleos.car.permission.CAR_SEATS" />   <!-- the driver's seat belt: the pet reminds the driver to buckle up (read only) -->
+    <uses-permission android:name="pleos.car.permission.CAR_WINDOWS" /> <!-- the windscreen wiper: it is raining, the pet asks to slow down (read only) -->
     <uses-permission android:name="pleos.car.permission.CAR_ENERGY" />  <!-- fuel percent, battery charge, charge port: tells when the car is being refuelled / charged -->
     <uses-permission android:name="pleos.car.permission.NAVI_ROUTE" />  <!-- route: next turn, remaining distance and time (read only) -->
     <!-- keeps the pet running in the background, and shows it small over other screens -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
-    <!-- which 시·도 the car is in, for the map collection. Only the region is kept, never the route or the position. -->
+    <!-- Region collection and experimental GPS-speed score: only aggregates are kept, never coordinates or speed traces. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />

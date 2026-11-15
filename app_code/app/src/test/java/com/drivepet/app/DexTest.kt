@@ -304,3 +304,55 @@ class DexTest {
         }
     }
 }
+class RegionTrackerTest {
+    @Test fun theFirstRegionCountsAtOnce() {
+        val t = RegionTracker()
+        assertEquals("seoul", t.onFix("seoul", 0L))
+        assertEquals("seoul", t.current)
+    }
+
+    @Test fun aNewRegionNeedsTenSecondsAndTwoFixes() {
+        val t = RegionTracker()
+        t.onFix("gyeonggi", 0L)
+        assertNull(t.onFix("seoul", 5_000L))            // just over the line
+        assertEquals("gyeonggi", t.current)
+        assertNull(t.onFix("seoul", 10_000L))           // 5 s in: not yet
+        assertEquals("seoul", t.onFix("seoul", 15_000L))
+        assertEquals("seoul", t.current)
+    }
+
+    @Test fun dippingOverTheBorderAndBackChangesNothing() {
+        val t = RegionTracker()
+        t.onFix("gyeonggi", 0L)
+        for (i in 1..20) {                               // a road along the border: the fixes take turns
+            assertNull(t.onFix(if (i % 2 == 0) "gyeonggi" else "seoul", i * 5_000L))
+            assertEquals("gyeonggi", t.current)
+        }
+    }
+
+    @Test fun leavingAndComingBackIsEnteredAgain() {
+        val t = RegionTracker()
+        t.onFix("seoul", 0L)
+        t.onFix("gyeonggi", 5_000L); assertEquals("gyeonggi", t.onFix("gyeonggi", 15_000L))
+        t.onFix("seoul", 20_000L); assertEquals("seoul", t.onFix("seoul", 30_000L))
+    }
+
+    @Test fun noRegionCountsOnlyAfterAMinute() {
+        val t = RegionTracker()
+        t.onFix("busan", 0L)
+        assertNull(t.onFix(null, 5_000L)); assertNull(t.onFix(null, 30_000L))
+        assertEquals("busan", t.current)                 // a bridge out over the sea: still Busan
+        t.onFix(null, 65_000L)
+        assertNull(t.current)
+        assertEquals("busan", t.onFix("busan", 70_000L)) // back on land: counts at once
+    }
+
+    @Test fun theWelcomeGiftIsOnlyGivenTheFirstTimeARegionIsEntered() {
+        val d = Dex(DexState(), Random(1))
+        assertEquals(1, d.onDrive("seoul", 1f, 1).size)                  // first ever kilometre in Seoul
+        d.onDrive("gyeonggi", 1f, 1)                                     // out to Gyeonggi (its own gift)
+        val again = (1..3).sumOf { d.onDrive("seoul", 1f, 1).size }      // back in Seoul: only the ordinary chance now
+        assertTrue(again < 3)
+        assertTrue("seoul" in d.visited && "gyeonggi" in d.visited)
+    }
+}

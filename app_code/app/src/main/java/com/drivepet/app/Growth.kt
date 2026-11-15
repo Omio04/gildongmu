@@ -12,6 +12,14 @@ enum class GrowthStage(val label: String, val fromKm: Float) {
     ADULT("성인기", 5000f);
 
     companion object {
+        /**
+         * The egg is a plain, sleeping egg only for the first drives: after this many km it cracks, a face and two ears
+         * come out and it starts to bounce. About one ordinary day of driving (a commute there and back), so something
+         * already happens the first or second time the app is opened again.
+         */
+        const val EGG_WAKES_KM = 30f
+        fun eggAwake(totalKm: Float) = totalKm >= EGG_WAKES_KM
+
         fun of(totalKm: Float): GrowthStage = values().last { totalKm >= it.fromKm }
 
         /** km still to drive to reach the next stage, or null when the pet is fully grown */

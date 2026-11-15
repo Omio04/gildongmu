@@ -28,6 +28,21 @@ object PetHub {
     /** the driving record, one line per driven day (the calendar) */
     lateinit var driveLog: DriveLog
         private set
+    lateinit var drivingHistory: DrivingHistory
+        private set
+    private val scoreTracker = DrivingScoreTracker()
+    private var scoreTripActive = false
+    private var scorePreview: DrivingHistory? = null
+    val showingScoreDemo get() = scorePreview != null
+    val officialScoreProvider: OfficialScoreProvider = BluelinkNotConnected
+    fun drivingScore(today: Int = currentDayKey(), days: Int = 90) = (scorePreview ?: drivingHistory).summary(today, days)
+
+    /** Preview never changes stored history, badges, points, or the real score. */
+    fun demoScore(show: Boolean) {
+        scorePreview = if (show) DrivingHistory(listOf(ScoredDrive(System.currentTimeMillis(), 100.0,
+            7200.0, 7500.0, 2, 3, 1, 720.0))) else null
+        recordVersion++; tickListeners.forEach { it() }
+    }
     /** the badges earned so far (they stay when the record is deleted) */
     lateinit var badges: BadgeBook
         private set
@@ -87,7 +102,88 @@ object PetHub {
     /** demo only: force hungry on or off regardless of the car (null = follow the car) */
     private var hungryOverride: Boolean? = null
 
+    /** a short notice for the driver (a new region, the seat belt, rain, low energy): a card beside the small pet, or what the pet says on its own screen */
+    val alertListeners = CopyOnWriteArrayList<(PetAlert) -> Unit>()
+    private fun alert(a: PetAlert) {
+        if (app == null) return
+        if (a.say != null && engine.snapshot().stage != GrowthStage.EGG) voice?.sayShort(a.say)   // an egg cannot talk
+        alertListeners.forEach { it(a) }
+    }
+
+    /** how far the car can still go, km (Pleos Vehicle: Odometer.rangeRemaining), or null when the car does not say */
+    var rangeKm: Int? = null
+        private set
+    /** the driver's seat belt (Pleos Vehicle: Seat.seatBeltBuckled), null when the car does not say */
+    var beltOn: Boolean? = null
+        private set
+    /** the windscreen wiper is running (Pleos Vehicle: Wiper.wiperState): it is raining */
+    var wiperOn = false
+        private set
+    private var beltAlertAt = 0L
+    private var rainAlertAt = 0L
+
+    private fun onEnergy(fuel: Int?, battery: Int?) {
+        val was = hungry
+        if (fuel != null) fuelPercent = fuel
+        if (battery != null) batteryPercent = battery
+        if (!was && hungry) alertLowEnergy()
+    }
+
+    private fun alertLowEnergy() {
+        val what = energyPercent?.let { (if (usesBattery) "배터리 " else "연료 ") + "$it%" }
+        val far = rangeKm?.let { "앞으로 약 ${it}km" }
+        alert(PetAlert(if (usesBattery) AlertIcon.BATTERY else AlertIcon.FUEL, "배가 고파요",
+            listOfNotNull(what, far).joinToString(" · ").ifEmpty { if (usesBattery) "충전이 필요해요" else "주유가 필요해요" }, "배고파, 밥 줘"))
+    }
+
+    /** the car reports the range in metres (the Android car property RANGE_REMAINING); see the note in DRIVING_RECORD / CHANGES */
+    private fun onRange(v: Float) { if (v.isFinite() && v >= 0f) rangeKm = (v / RANGE_UNITS_PER_KM).toInt() }
+
+    private fun onSeatBelt(on: Boolean) {
+        val was = beltOn
+        beltOn = on
+        if (!on && was != false && gear == "D") alertBelt()                        // unbuckled while in gear
+        if (on && was == false && gear == "D" && engine.snapshot().stage != GrowthStage.EGG) voice?.sayShort("좋아, 안전하게 가자")
+        tickListeners.forEach { it() }
+    }
+
+    private fun alertBelt() {
+        val now = SystemClock.elapsedRealtime()
+        if (now - beltAlertAt < BELT_ALERT_GAP_MS) return
+        beltAlertAt = now
+        alert(PetAlert(AlertIcon.BELT, "안전벨트를 매 주세요", "출발 전에 딸깍!", "안전벨트 매 줘"))
+    }
+
+    private fun onWiper(on: Boolean) {
+        val was = wiperOn
+        wiperOn = on
+        val now = SystemClock.elapsedRealtime()
+        if (on && !was && gear == "D" && (rainAlertAt == 0L || now - rainAlertAt > RAIN_ALERT_GAP_MS)) {
+            rainAlertAt = now
+            alert(PetAlert(AlertIcon.RAIN, "비가 와요", "천천히, 앞차와 넉넉하게", "비 온다, 천천히 가자"))
+        }
+        tickListeners.forEach { it() }
+    }
+
+    /** demo only: the same entry points the car uses, for an emulator without those signals */
+    fun demoCar(what: String, value: String?) {
+        when (what) {
+            "belt_on" -> onSeatBelt(true)
+            "belt_off" -> onSeatBelt(false)
+            "wiper_on" -> onWiper(true)
+            "wiper_off" -> onWiper(false)
+            "fuel" -> { batteryPercent = null; onEnergy(value?.toIntOrNull() ?: 50, null) }
+            "battery" -> onEnergy(null, value?.toIntOrNull() ?: 50)
+            "range" -> onRange((value?.toFloatOrNull() ?: 300f) * RANGE_UNITS_PER_KM)
+        }
+        tickListeners.forEach { it() }
+    }
+
     val hungry: Boolean get() = hungryOverride ?: PetState.energyLow(fuelPercent, batteryPercent)
+    /** an electric car reports its battery; then the low-energy mark is a battery, otherwise a fuel pump */
+    val usesBattery: Boolean get() = batteryPercent != null
+    /** how full the car is (battery if it has one, else fuel), or null when the car does not say */
+    val energyPercent: Int? get() = batteryPercent ?: fuelPercent
 
     /** how the pet looks right now */
     val petState: PetState get() = if (app == null) PetState.NORMAL else engine.snapshot().state(hungry)
@@ -164,6 +260,7 @@ object PetHub {
         wardrobe = Store.loadWardrobe(c)
         dex = Store.loadDex(c)
         driveLog = Store.loadDriveLog(c)
+        drivingHistory = DrivingHistory.decode(c.getSharedPreferences("pet", Context.MODE_PRIVATE).getString("driving_score_v1", ""))
         badges = Store.loadBadges(c)
         followCar = Store.loadSettings(c)
         Store.loadProfile(c).let { petName = it.first; onboarded = it.second }
@@ -175,19 +272,26 @@ object PetHub {
             onBrake = ::onBrake,
             onAngle = engine::onSteeringAngle,
             onDistance = ::onOdometer,
-            onFuel = { fuelPercent = it },
-            onBattery = { batteryPercent = it },
-            onLog = { },
+            onFuel = { onEnergy(it, null) },
+            onBattery = { onEnergy(null, it) },
+            onRange = ::onRange,
+            onSeatBelt = ::onSeatBelt,
+            onWiper = ::onWiper,
+            onLog = { android.util.Log.d("DrivePet", it) },
         ).also { it.start() }
-        navi = NaviSource(c, onTrip = { navTrip = it }, onTurn = { turn = it }, onLog = { }).also { it.start() }
-        location = LocationSource(c, ::onLocation).also { it.start() }
+        navi = NaviSource(c, onTrip = { if ((it == null) != (navTrip == null)) android.util.Log.d("DrivePet", "navi route: ${it?.destination ?: "none"}"); navTrip = it }, onTurn = { turn = it }, onLog = { android.util.Log.d("DrivePet", it) }).also { it.start() }
+        location = LocationSource(c, ::onLocation, { ms, wall, speed, accuracy, now ->
+            if (scoreTripActive && !demoDriving && gear == "D") scoreTracker.sample(ms, wall, speed, accuracy, now)
+        }, scoreTracker::breakContinuity).also { it.start() }
         main.postDelayed(loop, 1000)
     }
 
     fun stop() {
         main.removeCallbacksAndMessages(null)
+        finishScoreTrip()
         save()
         vehicle?.stop(); navi?.stop(); voice?.shutdown(); location?.stop()
+        scorePreview = null
         vehicle = null; navi = null; voice = null; location = null; app = null
     }
 
@@ -200,7 +304,14 @@ object PetHub {
 
     /** [demo] = the gear came from the demo, not from the car. */
     fun setGear(g: String, demo: Boolean = false) {
+        // A real drive includes temporary N/R shifts; only parking ends it. Demo mileage never enters scoring.
+        if (demo || g == "P") finishScoreTrip()
+        if (!demo && g == "D" && !scoreTripActive) {
+            scoreTracker.begin(SystemClock.elapsedRealtime()); scoreTripActive = true
+        }
+        if (g != "D") scoreTracker.breakContinuity()
         if (g == "D" && gear != "D") tripFinds.clear()   // a new drive: the finds of the last one were already handed to the trip card
+        if (g == "D" && gear != "D" && beltOn == false) alertBelt()   // setting off without the seat belt
         gear = g
         demoDriving = demo && g == "D"
         engine.setDriving(g == "D")
@@ -329,6 +440,8 @@ object PetHub {
     private var lastFind: Find? = null
     private var lastFindAt = 0L
     val findListeners = CopyOnWriteArrayList<(Find) -> Unit>()
+    private val tracker = RegionTracker()
+    private val announcedAt = HashMap<String, Long>()
 
     /** the region the car is in right now, or null (no GPS, no permission, an old position, outside Korea) */
     val regionId: String? get() = demoRegion ?: if (SystemClock.elapsedRealtime() - fixAt < FIX_STALE_MS) fixRegion else null
@@ -337,10 +450,30 @@ object PetHub {
 
     /** only the region is kept from a position */
     private fun onLocation(lat: Double, lon: Double) {
-        fixRegion = Korea.locate(lat, lon)?.id
-        fixAt = SystemClock.elapsedRealtime()
+        val now = SystemClock.elapsedRealtime()
+        if (now - fixAt > FIX_STALE_MS) tracker.reset()   // a long gap (the car was off, a long tunnel): start again from this position
+        val entered = tracker.onFix(Korea.locate(lat, lon)?.id, now)
+        fixRegion = tracker.current
+        fixAt = now
+        if (entered != null) announceRegion(entered)
         dex.enter(fixRegion)
         tickListeners.forEach { it() }
+    }
+
+    /** tells the listeners that the car came into [id]; not again for the same region within [REANNOUNCE_MS] (a border road) */
+    private fun announceRegion(id: String) {
+        val r = Korea.region(id) ?: return
+        val now = SystemClock.elapsedRealtime()
+        val last = announcedAt[id]
+        if (last != null && now - last < REANNOUNCE_MS) return
+        announcedAt[id] = now
+        val n = dex.count(id)
+        val sub = when {
+            id !in dex.visited -> "처음 온 곳이에요! 곧 하나를 찾아올게요"
+            n >= r.items.size -> "도감 $n/${r.items.size} · 다 모은 곳이에요"
+            else -> "도감 $n/${r.items.size} · 달리는 동안 찾아올게요"
+        }
+        alert(PetAlert(AlertIcon.PIN, "${r.name}에 들어왔어요", sub))
     }
 
     /** call after the location permission was granted */
@@ -360,6 +493,8 @@ object PetHub {
         engine.addPoints(f.points)
         tripFinds += f
         lastFind = f; lastFindAt = SystemClock.elapsedRealtime()
+        // the pet says what it found when it is back with it (an egg cannot talk)
+        if (engine.snapshot().stage != GrowthStage.EGG) main.postDelayed({ voice?.sayShort(if (f.isNew) "${f.item.name} 찾았어!" else "${f.item.name} 또 찾았어") }, FETCH_BACK_MS)
         save()
         findListeners.forEach { it(f) }
         tickListeners.forEach { it() }
@@ -372,7 +507,11 @@ object PetHub {
         return if (age in 0..FETCH_TOTAL_MS) f to age else null
     }
 
-    fun demoRegion(id: String?) { demoRegion = id?.takeIf { Korea.region(it) != null }; dex.enter(demoRegion); tickListeners.forEach { it() } }
+    fun demoRegion(id: String?) {
+        demoRegion = id?.takeIf { Korea.region(it) != null }
+        demoRegion?.let { announceRegion(it) }
+        dex.enter(demoRegion); tickListeners.forEach { it() }
+    }
     fun demoGeo(lat: Double, lon: Double) { demoRegion(Korea.locate(lat, lon)?.id) }
     fun demoFind() { val id = regionId ?: return; dex.forceFind(id, currentDayKey())?.let { handleFind(it) } }
     fun demoDexFill(ids: List<String>) {
@@ -404,12 +543,23 @@ object PetHub {
 
     private fun saveRecord() {
         recordVersion++
-        app?.let { Store.saveDriveLog(it, driveLog); Store.saveBadges(it, badges) }
+        app?.let {
+            Store.saveDriveLog(it, driveLog); Store.saveBadges(it, badges)
+            it.getSharedPreferences("pet", Context.MODE_PRIVATE).edit().putString("driving_score_v1", drivingHistory.encode()).apply()
+        }
+    }
+
+    private fun finishScoreTrip() {
+        if (!scoreTripActive) return
+        scoreTripActive = false
+        scoreTracker.finish(SystemClock.elapsedRealtime(), System.currentTimeMillis())?.let { drivingHistory.add(it); saveRecord() }
     }
 
     /** settings: delete every day of the driving record. The badges and the points already earned stay. */
     fun clearDriveLog() {
         driveLog.clear()
+        drivingHistory.clear(); scorePreview = null
+        if (scoreTripActive) scoreTracker.begin(SystemClock.elapsedRealtime())
         saveRecord(); tickListeners.forEach { it() }
     }
 
@@ -448,6 +598,7 @@ object PetHub {
     /** demo only: no record and no badges at all (to try the first-record badge again) */
     fun demoResetRecord() {
         driveLog.clear(); badges.clear(); pendingBadges = emptyList()
+        drivingHistory.clear(); scorePreview = null
         saveRecord(); tickListeners.forEach { it() }
     }
 
@@ -505,9 +656,24 @@ object PetHub {
     private const val MAX_ODOMETER_STEP_KM = 5f
     /** a position older than this is not trusted to say which region the car is in */
     private const val FIX_STALE_MS = 3 * 60_000L
-    /** the small pet goes off to fetch (1.2 s), is away (1.4 s), comes back (1.2 s) and shows what it brought (5 s) */
-    const val FETCH_TOTAL_MS = 8_800L
+    /** the small pet runs off and is gone (1 s), stays away (2.2 s), comes back with the thing (1.1 s) and shows it with a card (5 s) */
+    const val FETCH_LEAVE_MS = 1_000L
+    const val FETCH_AWAY_MS = 3_200L
+    const val FETCH_BACK_MS = 4_300L
+    const val FETCH_TOTAL_MS = 9_300L
+    /** the car's "range remaining" comes in metres */
+    private const val RANGE_UNITS_PER_KM = 1000f
+    private const val BELT_ALERT_GAP_MS = 30_000L
+    private const val RAIN_ALERT_GAP_MS = 20 * 60_000L
+    /** the same region is not announced again within this time (driving along a border) */
+    private const val REANNOUNCE_MS = 10 * 60_000L
 }
+
+/** what a notice is about (its picture) */
+enum class AlertIcon { PIN, BELT, RAIN, FUEL, BATTERY }
+
+/** a short notice from the pet: [title] and a smaller line [sub]; [say] is spoken (not by an egg) */
+class PetAlert(val icon: AlertIcon, val title: String, val sub: String, val say: String? = null)
 
 /** The pet's state and the inventory survive restarts. */
 object Store {

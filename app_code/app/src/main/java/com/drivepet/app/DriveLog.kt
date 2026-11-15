@@ -5,20 +5,8 @@ import java.util.Locale
 import java.util.TreeMap
 import kotlin.math.roundToInt
 
-/**
- * The driving record ("운전 기록"): one line per day the car was driven, kept on the device so the calendar can show it.
- *
- * The day's score is the **깜빡이 사용 점수** (turn-signal score): the share of the day's turns made with the turn signal on,
- * 0..100. It is the one habit the car really measures here:
- *  - The Pleos Vehicle SDK gives the turn signal, the steering wheel angle, the brake pedal (pressed or not), the gear and
- *    the odometer, and no speed or acceleration, so a hard stop cannot be measured, only guessed (three quick presses).
- *  - The points and experience the pet earns mix distance, calm time and signals, so they are not a measure of habits.
- *  - No safe-driving score could be used: Hyundai Developers' driving data APIs need a partnership and a server, the Pleos
- *    cloud vehicle data API (Europe only for now) returns raw samples without any score, and TMAP has no public score API.
- * So the score stays a turn-signal score, and the guesses (jerky braking, a sharp wheel) are shown beside it as notes,
- * never mixed into it. A day with no turn has no score (it is still a driven day on the calendar).
- *
- * Pure logic with no Android classes, so it can be tested on the JVM.
+/** Legacy turn-signal record and badges. The separate GPS-based experimental score lives in DrivingScore.kt.
+ * Existing history is never reinterpreted as a Bluelink score or as measured acceleration data.
  */
 data class DayRecord(
     /** the day as a number, like 20261112 */

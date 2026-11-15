@@ -30,6 +30,7 @@ class PetService : Service() {
     private val onReaction: (Reaction) -> Unit = { overlay?.refresh() }
     private val onTick: () -> Unit = { overlay?.refresh() }
     private val onFind: (Find) -> Unit = { overlay?.playFetch() }
+    private val onAlert: (PetAlert) -> Unit = { overlay?.showAlert(it) }
     private val onVisible: (Boolean) -> Unit = { visible -> if (visible) overlay?.hide() else overlay?.show() }
 
     /** the gear has just been put in P: bring the pet's screen back */
@@ -65,6 +66,9 @@ class PetService : Service() {
                 "dex_fill" -> PetHub.demoDexFill(i.getStringExtra("ids").orEmpty().split(",").filter { it.isNotBlank() })
                 "dex_clear" -> PetHub.demoDexClear()
                 "art_sheet" -> ItemArt.sheet(java.io.File(filesDir, "items.png"))
+                // what the car would say (see PetHub.demoCar): the seat belt, the wiper, fuel / battery percent, the range in km
+                "belt_on", "belt_off", "wiper_on", "wiper_off", "fuel", "battery", "range" -> PetHub.demoCar(i.getStringExtra("cmd").orEmpty(), i.getStringExtra("ids"))
+                "pet_sheet" -> PetPainter().sheet(java.io.File(filesDir, "pet.png"))
                 // the driving record: a made-up history (ids = how many days back, default 45), one day
                 // (ids = "daysAgo,km,good,missed[,jerky,harsh]"), deleting it as the settings do, or no record and no badges at all
                 "log_demo" -> PetHub.demoDriveLog(i.getStringExtra("ids")?.toIntOrNull() ?: 45)
@@ -73,6 +77,8 @@ class PetService : Service() {
                         f.getOrNull(4)?.toIntOrNull() ?: 0, f.getOrNull(5)?.toIntOrNull() ?: 0)
                 }
                 "log_clear" -> PetHub.clearDriveLog()
+                "score_demo" -> PetHub.demoScore(true)
+                "score_live" -> PetHub.demoScore(false)
                 "log_reset" -> PetHub.demoResetRecord()
             }
         }
@@ -90,6 +96,7 @@ class PetService : Service() {
         PetHub.visibilityListeners += onVisible
         PetHub.autoOpenListeners += onAutoOpen
         PetHub.findListeners += onFind
+        PetHub.alertListeners += onAlert
         if (debuggable) {
             registerReceiver(demo, IntentFilter(ACTION_DEMO), RECEIVER_EXPORTED)
         }
@@ -112,6 +119,7 @@ class PetService : Service() {
         PetHub.visibilityListeners -= onVisible
         PetHub.autoOpenListeners -= onAutoOpen
         PetHub.findListeners -= onFind
+        PetHub.alertListeners -= onAlert
         overlay?.hide()
         PetHub.stop()
         super.onDestroy()

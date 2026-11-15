@@ -33,8 +33,9 @@ import kotlin.math.sqrt
  */
 class RegionArt(val spots: List<Pair<Float, Float>>, val bubbleR: Float, val tileDy: Float, val first: Pair<Float, Float>?) {
     companion object {
-        fun load(context: Context, id: String): RegionArt? = try {
-            val o = org.json.JSONObject(context.assets.open("regions/$id/spots.json").bufferedReader().use { it.readText() })
+        /** [day]: the spots of the daytime picture (spots_day.json), which are not the same places as in the night one */
+        fun load(context: Context, id: String, day: Boolean = false): RegionArt? = try {
+            val o = org.json.JSONObject(context.assets.open("regions/$id/spots${if (day) "_day" else ""}.json").bufferedReader().use { it.readText() })
             val a = o.getJSONArray("spots")
             val f = o.optJSONArray("first")
             RegionArt((0 until a.length()).map { val p = a.getJSONArray(it); p.getDouble(0).toFloat() to p.getDouble(1).toFloat() },
@@ -98,9 +99,13 @@ object RegionLook {
     )
 
     /** the island picture shipped for a region (assets/regions/<id>/island.png), or null when the island is drawn in code */
-    fun art(context: Context, id: String): android.graphics.Bitmap? =
-        try { context.assets.open("regions/$id/island.png").use { android.graphics.BitmapFactory.decodeStream(it) } } catch (e: Exception) { null }
-    fun hasArt(context: Context, id: String): Boolean = try { context.assets.list("regions/$id")?.let { "island.png" in it && "spots.json" in it } == true } catch (e: Exception) { false }
+    fun art(context: Context, id: String, day: Boolean = false): android.graphics.Bitmap? =
+        try { context.assets.open("regions/$id/island${if (day) "_day" else ""}.png").use { android.graphics.BitmapFactory.decodeStream(it) } } catch (e: Exception) { null }
+    /** [day]: is there a daytime picture (island_day.png with spots_day.json); otherwise the night one */
+    fun hasArt(context: Context, id: String, day: Boolean = false): Boolean = try {
+        val sfx = if (day) "_day" else ""
+        context.assets.list("regions/$id")?.let { "island$sfx.png" in it && "spots$sfx.json" in it } == true
+    } catch (e: Exception) { false }
 
     /** a line about each region (the map panel and the region screen) */
     val blurb: Map<String, String> = mapOf(
@@ -135,7 +140,7 @@ object RegionLook {
  * One region as a small 2.5D island (an isometric slab with trees and buildings on it). What the driver has found stands on it
  * on its own pedestal, with a name tag; what is still missing is a locked pedestal. The pet stands there too.
  */
-class RegionSceneView(context: Context, private val region: Region, private val night: Boolean, private val onPick: (String) -> Unit) : View(context) {
+class RegionSceneView(context: Context, private val region: Region, private val night: Boolean, private val dayArt: Boolean, private val onPick: (String) -> Unit) : View(context) {
     var selectedId: String? = null
         set(v) { field = v; invalidate() }
     var zoom = 1f
@@ -151,9 +156,9 @@ class RegionSceneView(context: Context, private val region: Region, private val 
     private val hue = RegionLook.hue[region.id] ?: Color.GRAY
     private val land = landOf(region.id)
     /** an island picture, if the app ships one: app/src/main/assets/regions/<id>/island.png (the drawn island is the fallback) */
-    private val spots: RegionArt? = RegionArt.load(context, region.id)
+    private val spots: RegionArt? = RegionArt.load(context, region.id, dayArt)
     /** the picture is used only together with its spots (without them the drawn island is shown) */
-    private val art: android.graphics.Bitmap? = if (spots == null) null else RegionLook.art(context, region.id)?.let { feather(it) }
+    private val art: android.graphics.Bitmap? = if (spots == null) null else RegionLook.art(context, region.id, dayArt)?.let { feather(it) }
 
     /** fades the four edges of the picture to nothing, so its own sky melts into the screen instead of showing a box */
     private fun feather(src: android.graphics.Bitmap): android.graphics.Bitmap {
@@ -322,6 +327,11 @@ class RegionSceneView(context: Context, private val region: Region, private val 
         if (hits < hitX.size) { hitX[hits] = x; hitY[hits] = y; hitR[hits] = size * 0.7f; hitId[hits] = item.id; hits++ }
         val chosen = selectedId == item.id
         if (!have) { if (bubbleR > 0f) drawMystery(cv, x, y, groundY, bubbleR, chosen); return }
+        if (dayArt) {   // by day: a soft pool of light behind the sticker, where the bubble was, so what is left of the painted-out place reads as a glow
+            val hr = (if (bubbleR > 0f) bubbleR else size * 0.65f) * 1.12f
+            fill.shader = RadialGradient(x, y, hr, intArrayOf(0x73FFFFFF, 0x4DFFFFFF, 0x00FFFFFF), floatArrayOf(0f, 0.68f, 1f), Shader.TileMode.CLAMP)
+            fill.color = Color.BLACK; cv.drawCircle(x, y, hr, fill); fill.shader = null
+        }
         ItemArt.groundGlow(cv, x, groundY, size * (if (chosen) 0.85f else 0.7f))
         ItemArt.sticker(cv, item, x, y, size, if (chosen) 0xFFFFD66B.toInt() else 0xFFFFFFFF.toInt(), d)
         val tw = (System.currentTimeMillis() % 1600) / 1600f
@@ -329,11 +339,12 @@ class RegionSceneView(context: Context, private val region: Region, private val 
         ItemArt.twinkle(cv, x - size * 0.52f, y - size * 0.12f, size * (0.05f + 0.03f * cos(tw * 6.283f)), 0xFFFFFFFF.toInt())
         if (!tag) return
         // the name tag, in the same style as the tags painted in the picture
-        txt.textSize = 15f * d; txt.color = 0xFFF0F3FF.toInt()
+        // (by day: a white tag with dark writing, which stands out on the bright picture; at night the dark blue one)
+        txt.textSize = 15f * d; txt.color = if (dayArt) 0xFF22356B.toInt() else 0xFFF0F3FF.toInt()
         val label = item.name + if (item.rarity == Rarity.RARE) "  ★" else ""
         val w2 = txt.measureText(label) / 2f + 12f * d; val ty = y - size * 0.62f
-        fill.color = 0xF01A2466.toInt(); cv.drawRoundRect(x - w2, ty - 18f * d, x + w2, ty + 8f * d, 13f * d, 13f * d, fill)
-        line.color = if (chosen) 0xFFFFD66B.toInt() else 0x998FA0F0.toInt(); line.strokeWidth = 1.4f * d
+        fill.color = if (dayArt) 0xF5FFFFFF.toInt() else 0xF01A2466.toInt(); cv.drawRoundRect(x - w2, ty - 18f * d, x + w2, ty + 8f * d, 13f * d, 13f * d, fill)
+        line.color = if (chosen) (if (dayArt) 0xFFE9A92C.toInt() else 0xFFFFD66B.toInt()) else if (dayArt) 0xAA7FA8E8.toInt() else 0x998FA0F0.toInt(); line.strokeWidth = 1.4f * d
         cv.drawRoundRect(x - w2, ty - 18f * d, x + w2, ty + 8f * d, 13f * d, 13f * d, line)
         cv.drawText(label, x, ty, txt)
     }
@@ -342,15 +353,18 @@ class RegionSceneView(context: Context, private val region: Region, private val 
     private fun drawMystery(cv: Canvas, x: Float, y: Float, groundY: Float, r: Float, chosen: Boolean) {
         val hw = r * 0.8f; val hh = hw * 0.5f; val t = r * 0.14f
         fun diamond(cy: Float) { path.reset(); path.moveTo(x, cy - hh); path.lineTo(x + hw, cy); path.lineTo(x, cy + hh); path.lineTo(x - hw, cy); path.close() }
-        diamond(groundY + t); fill.color = 0xFF16206B.toInt(); cv.drawPath(path, fill)                     // its thickness
-        diamond(groundY); fill.color = if (chosen) 0xFF5A4AB8.toInt() else 0xFF2A3A9A.toInt(); cv.drawPath(path, fill)
-        line.color = if (chosen) 0xFFFFD66B.toInt() else 0xFF8FA6FF.toInt(); line.strokeWidth = (if (chosen) 2.4f else 1.4f) * d; cv.drawPath(path, line)
+        // the tile: dark blue at night, a bright blue by day (as in the picture it replaces)
+        diamond(groundY + t); fill.color = if (dayArt) 0xFF2F6FC4.toInt() else 0xFF16206B.toInt(); cv.drawPath(path, fill)                     // its thickness
+        diamond(groundY); fill.color = if (chosen) (if (dayArt) 0xFF6F7BE8.toInt() else 0xFF5A4AB8.toInt()) else if (dayArt) 0xFF3F9BEA.toInt() else 0xFF2A3A9A.toInt(); cv.drawPath(path, fill)
+        line.color = if (chosen) 0xFFFFD66B.toInt() else if (dayArt) 0xFFCFE6FF.toInt() else 0xFF8FA6FF.toInt(); line.strokeWidth = (if (chosen) 2.4f else 1.4f) * d; cv.drawPath(path, line)
         // the glass bubble
         fill.shader = RadialGradient(x - r * 0.3f, y - r * 0.35f, r * 1.3f, intArrayOf(0x66FFFFFF, 0x33E6ECFF, 0x55C8D4FF), floatArrayOf(0f, 0.6f, 1f), Shader.TileMode.CLAMP)
         fill.color = Color.BLACK; cv.drawCircle(x, y, r, fill); fill.shader = null
         fill.color = 0x88FFFFFF.toInt(); cv.drawOval(x - r * 0.62f, y - r * 0.78f, x - r * 0.12f, y - r * 0.5f, fill)   // the shine
         line.color = if (chosen) 0xFFFFD66B.toInt() else 0xAAFFFFFF.toInt(); line.strokeWidth = (if (chosen) 3f else 1.6f) * d; cv.drawCircle(x, y, r, line)
-        txt.textSize = r * 1.25f; txt.color = Color.WHITE; cv.drawText("?", x, y + r * 0.43f, txt)
+        txt.textSize = r * 1.25f
+        if (dayArt) { txt.color = 0x66224A9A; cv.drawText("?", x + r * 0.03f, y + r * 0.46f, txt) }   // a soft shadow, so the white mark reads on the bright picture
+        txt.color = Color.WHITE; cv.drawText("?", x, y + r * 0.43f, txt)
     }
 
     private fun drawHill(cv: Canvas, p: Piece) {
@@ -422,16 +436,17 @@ class RegionSceneView(context: Context, private val region: Region, private val 
 
     private fun drawPet(cv: Canvas, p: Piece, now: Long) {
         val x = ix(p.u, p.v); val y = iy(p.u, p.v)
-        val bw = sx * 0.2f
-        fill.color = 0x33000000; cv.drawOval(x - bw * 1.1f, y - bw * 0.2f, x + bw * 1.1f, y + bw * 0.2f, fill)
         val stage = if (PetHub.started) PetHub.engine.snapshot().stage else GrowthStage.ADULT
+        val bw = sx * 0.2f * (if (stage == GrowthStage.EGG) 0.66f else 0.8f)
+        fill.color = 0x33000000; cv.drawOval(x - bw * 0.9f, y - bw * 0.16f, x + bw * 0.9f, y + bw * 0.16f, fill)
+        painter.eggAwake = !PetHub.started || GrowthStage.eggAwake(PetHub.engine.snapshot().totalKm)
         cv.save(); cv.translate(x, y); cv.scale(bw, bw)
-        painter.draw(cv, PetState.NORMAL, stage, if (PetHub.started) PetHub.outfit else emptyMap(), false, false, 0f, max(1.6f * d / bw, 0.058f), now, false)
+        painter.draw(cv, PetState.NORMAL, stage, if (PetHub.started) PetHub.outfit else emptyMap(), false, false, 0f, max(1.6f * d / bw, 0.047f), now, false)
         cv.restore()
         // "와! 서울이다!"
         val label = "와! ${region.name}이다!"
         txt.textSize = 17f * d; txt.color = Look.INK
-        val tw = txt.measureText(label); val bx = x + bw * 1.1f + tw / 2f + 22f * d; val by = y - bw * 1.6f
+        val tw = txt.measureText(label); val bx = x + bw * 1.1f + tw / 2f + 22f * d; val by = y - bw * PetPainter.height(stage) * 0.8f
         fill.color = 0xFFFFFDF8.toInt(); cv.drawRoundRect(bx - tw / 2f - 16f * d, by - 22f * d, bx + tw / 2f + 16f * d, by + 12f * d, 18f * d, 18f * d, fill)
         line.color = Look.COCOA; line.strokeWidth = 2f * d; cv.drawRoundRect(bx - tw / 2f - 16f * d, by - 22f * d, bx + tw / 2f + 16f * d, by + 12f * d, 18f * d, 18f * d, line)
         cv.drawText(label, bx, by, txt)
@@ -499,8 +514,10 @@ class RegionMiniMap(context: Context, private val regionId: String, private val 
 
 /** the screen of one region: the island on the left, what has been found on the right */
 class RegionLayer(context: Context, private val regionId: String, private val onBack: () -> Unit) : FrameLayout(context) {
-    /** the island pictures are painted at night, so a region that has one is always shown in the night look */
-    private val night = Night.isDark(context) || RegionLook.hasArt(context, regionId)
+    /** the daytime picture is used when the app is in the light look and the region has one */
+    private val dayArt = !Night.isDark(context) && RegionLook.hasArt(context, regionId, true)
+    /** a region with only a night picture is always shown in the night look (the picture is dark) */
+    private val night = Night.isDark(context) || (!dayArt && RegionLook.hasArt(context, regionId))
     private val kit = Kit(context)
     private val region = Korea.region(regionId)!!
     private var picked: String? = null
@@ -518,7 +535,9 @@ class RegionLayer(context: Context, private val regionId: String, private val on
     init {
         val grad = GradientDrawable(GradientDrawable.Orientation.TL_BR,
             if (night) intArrayOf(Color.parseColor("#0A1448"), Color.parseColor("#122A74"), Color.parseColor("#1C3F96")) else intArrayOf(Color.parseColor("#D5E8FC"), Color.parseColor("#B4D5F8"), Color.parseColor("#9CC9F2")))
-        background = LayerDrawable(arrayOf(grad, if (landOf(regionId) == Land.CITY) SkylineDrawable(resources.displayMetrics.density, night) else HorizonDrawable(resources.displayMetrics.density, night, landOf(regionId))))
+        // the daytime picture brings its own sky, sea and city lights: the screen only continues its blue, top to bottom
+        val dayGrad = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(Color.parseColor("#4DA5EB"), Color.parseColor("#4AA2E8"), Color.parseColor("#3296E6")))
+        background = if (dayArt) dayGrad else LayerDrawable(arrayOf(grad, if (landOf(regionId) == Land.CITY) SkylineDrawable(resources.displayMetrics.density, night) else HorizonDrawable(resources.displayMetrics.density, night, landOf(regionId))))
         isClickable = true
 
         val back = title("‹ 뒤로", 19f, ink).apply {
@@ -545,7 +564,7 @@ class RegionLayer(context: Context, private val regionId: String, private val on
             addView(all)
         }
 
-        scene = RegionSceneView(context, region, night) { id -> picked = id; scene.selectedId = id; renderPanel() }
+        scene = RegionSceneView(context, region, night, dayArt) { id -> picked = id; scene.selectedId = id; renderPanel() }
         val zoomBtn = { label: String, onTap: () -> Unit ->
             title(label, 24f, headInk).apply {
                 gravity = Gravity.CENTER; minWidth = dp(56); minHeight = dp(56)

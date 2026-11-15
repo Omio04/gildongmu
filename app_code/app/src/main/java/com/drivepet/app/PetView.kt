@@ -22,8 +22,9 @@ import kotlin.math.min
 import kotlin.math.sin
 
 /**
- * How the pet is drawn. In gear the small floating pet is seen from behind: WALK_BACK while the car moves, STAND_BACK when
- * it has stopped (it just stops where it is). STAND is the front view when the car is not in gear.
+ * How the small floating pet moves. In gear: WALK_BACK while the car moves (it walks on the spot), STAND_BACK when it has
+ * stopped; STAND when the car is not in gear. It is always drawn from the front now (the names are from when it was seen
+ * from behind while driving).
  */
 enum class Pose { STAND, WALK_BACK, STAND_BACK }
 
@@ -43,10 +44,27 @@ class PetView(context: Context) : View(context) {
         set(v) { field = v; invalidate() }
     /** how grown the pet is, by the distance driven together: egg, infant, rebel, adult */
     var stage: GrowthStage = GrowthStage.EGG
-        set(v) { field = v; invalidate() }
+        set(v) {
+            // the egg has just hatched in front of us: the baby bounces for joy for a moment before it settles down
+            if (stageKnown && field == GrowthStage.EGG && v == GrowthStage.INFANT && showScene && isAttachedToWindow) { hatchUntil = System.currentTimeMillis() + HATCH_MS; burst(true) }
+            stageKnown = true
+            field = v; invalidate()
+        }
+    /** false while the egg is still whole (the first km): it only sleeps. True once its face is out: it bounces now and then */
+    var eggAwake: Boolean = true
+        set(v) {
+            // the face has just come out in front of us: a burst of sparkles and a few happy hops in a row
+            if (stageKnown && !field && v && stage == GrowthStage.EGG && showScene && isAttachedToWindow) { hatchUntil = System.currentTimeMillis() + HATCH_MS; burst(true) }
+            field = v; invalidate()
+        }
+    private var stageKnown = false
+    private var hatchUntil = 0L
     /** the emoji of the thing the pet has just fetched (small pet only), drawn as a badge */
     var carry: DexItem? = null
         set(v) { field = v; invalidate() }
+    /** the car is low on energy: 1 = a fuel pump, 2 = a battery, pulsing beside the pet's head (0 = nothing) */
+    var energyBadge: Int = 0
+        set(v) { if (field != v) { field = v; invalidate() } }
     private val emojiPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
     /** the furniture standing in the room, by item id (several at once) */
     var furniture: Set<String> = emptySet()
@@ -61,6 +79,16 @@ class PetView(context: Context) : View(context) {
     /** true: the pet stands still in the middle of the room instead of wandering (used by the first-run introduction) */
     var stayStill: Boolean = false
         set(v) { field = v; invalidate() }
+
+    /**
+     * How much of the room's right side is hidden right now, 0..1 of the width (the menu card slides in over it).
+     * The pet keeps to the part that can still be seen, so clothes can be tried on with the pet in view.
+     */
+    var coveredRight: Float = 0f
+        set(v) { field = v.coerceIn(0f, 0.8f); invalidate() }
+    private var coverK = 0f          // 0..1, eased towards "covered" so the pet slides aside instead of jumping
+    private var coverF = 1f          // how far the floor's width is squeezed to the left when fully covered
+    private var lastFrame = 0L
 
     // the speech bubble that stays beside the pet's head and follows it around the room
     private var bubbleText: String? = null
@@ -106,7 +134,7 @@ class PetView(context: Context) : View(context) {
         val now = System.currentTimeMillis()
         val pl = roomPlace(now)
         val bw = min(vw, vh) * 0.19f * pl.factor * growOf(stage)
-        if (abs(e.x - pl.x) <= bw * 1.1f && e.y <= pl.ground + bw * 0.2f && e.y >= pl.ground - bw * 2.2f) {
+        if (abs(e.x - pl.x) <= bw * PetPainter.halfWidth(stage) * 1.1f && e.y <= pl.ground + bw * 0.2f && e.y >= pl.ground - bw * PetPainter.height(stage) * 1.05f) {
             pokeUntil = now + 800L
             burst(true)
             onPoke?.invoke()
@@ -195,10 +223,13 @@ class PetView(context: Context) : View(context) {
      * Every 8 seconds the pet picks a new spot on the floor and walks there at a steady pace, then rests.
      * The same time always gives the same place, so nothing has to be stored.
      */
+    /** the floor's left-right coordinate, squeezed into the part of the room the menu card leaves free */
+    private fun seenU(u: Float) = lerp(u, -0.8f + (u + 0.8f) * coverF, coverK)
+
     private fun roomPlace(now: Long): Place {
-        // the egg does not move: it sleeps in its nest in the middle of the room (the intro keeps any stage still, too).
-        // the baby goes round the room like the others, but hopping (see drawPet)
-        if (stayStill || stage == GrowthStage.EGG) { val p = floorPoint(0f, 0.5f); return Place(p.first, p.second, p.third, 0.5f, false, false, 0f) }
+        // the egg does not move: it sits in its nest in the middle of the room (the intro keeps any stage still, too).
+        // the baby cannot walk yet either: it sits where it hatched. Only the rebel and the grown bear go round the room.
+        if (stayStill || stage == GrowthStage.EGG || stage == GrowthStage.INFANT) { val p = floorPoint(seenU(0f), 0.5f); return Place(p.first, p.second, p.third, 0.5f, false, false, 0f) }
         val slot = now / WALK_SLOT_MS
         val t = now % WALK_SLOT_MS
         val u0 = spotU(slot - 1); val v0 = spotV(slot - 1)
@@ -209,14 +240,15 @@ class PetView(context: Context) : View(context) {
         val walking = t < moveMs && dist > 0.05f
         val k = if (t >= moveMs) 1f else t / moveMs.toFloat()
         val u = lerp(u0, u1, k); val v = lerp(v0, v1, k)
-        val p = floorPoint(u, v)
+        val p = floorPoint(seenU(u), v)
         // going deeper into the room: seen from behind. Otherwise facing us, leaning a little the way it goes.
         val away = walking && dv < 0f && abs(dv) * DEPTH_COST > abs(du) * 0.7f
         val lean = if (walking) (du / dist).coerceIn(-1f, 1f) * 4f else 0f
         return Place(p.first, p.second, p.third, v, walking, away, lean)
     }
 
-    private fun overlayPlace(w: Float, h: Float) = Place(w / 2f, h * 0.9f, 1f, 1f, pose == Pose.WALK_BACK, pose != Pose.STAND, 0f)
+    // the small pet over the navigation always faces us (its face and mood can be read at a glance); it walks while the car moves
+    private fun overlayPlace(w: Float, h: Float) = Place(w / 2f, h * 0.9f, 1f, 1f, pose == Pose.WALK_BACK, false, 0f)
 
     // ================================================================ drawing
 
@@ -234,6 +266,11 @@ class PetView(context: Context) : View(context) {
                 val m = cal.get(java.util.Calendar.MINUTE) + cal.get(java.util.Calendar.SECOND) / 60f
                 roomPainter.clockHands(cv, cx, cy, r, cal.get(java.util.Calendar.HOUR) + m / 60f, m)
             }
+            // ease the pet out from under the menu card (and back) in about a third of a second
+            val target = if (coveredRight > 0f) 1f else 0f
+            if (coveredRight > 0f) coverF = ((2f * (1f - coveredRight) - 1f - 0.22f + 0.8f) / 1.6f).coerceIn(0.3f, 1f)
+            if (coverK != target) { val step = ((now - lastFrame).coerceIn(0L, 100L)) / 320f; coverK = if (target > coverK) min(target, coverK + step) else max(target, coverK - step) }
+            lastFrame = now
             val place = roomPlace(now)
             updateIdle(now, place.walking)
             val base = s * 0.19f * place.factor
@@ -246,14 +283,16 @@ class PetView(context: Context) : View(context) {
             val inNest = stage == GrowthStage.EGG
             if (inNest) drawNest(cv, place, base * EGG_GROW, false)
             drawPet(cv, place, base, now)
-            if (inNest) { drawNest(cv, place, base * EGG_GROW, true); drawZzz(cv, place, base * EGG_GROW, now) }
+            if (inNest) drawNest(cv, place, base * EGG_GROW, true)
             items.filter { it.first > place.v }.forEach { cv.drawBitmap(it.second.bmp, it.second.left, it.second.top, blit) }
             // the speech bubble last: in front of every piece of furniture, even when the pet stands far back in the room
             val g = growOf(stage)
-            drawBubble(cv, place.x, place.ground, base * g, base * 0.833f * g, now)
+            if (energyBadge != 0) drawEnergy(cv, place.x - base * g * PetPainter.halfWidth(stage) * 1.05f, place.ground - base * g * (PetPainter.height(stage) - 0.35f), base * g * 0.34f, now)
+            drawBubble(cv, place.x, place.ground - base * g * PetPainter.faceY(stage), base * g * PetPainter.halfWidth(stage), now)
         } else {
-            drawPet(cv, overlayPlace(w, h), s * 0.27f, now)
+            drawPet(cv, overlayPlace(w, h), s * 0.29f, now)
             drawCarry(cv, w, h)
+            if (energyBadge != 0) drawEnergy(cv, w * 0.19f, h * 0.2f, s * 0.115f, now)
         }
     }
 
@@ -273,7 +312,7 @@ class PetView(context: Context) : View(context) {
     private fun updateIdle(now: Long, walking: Boolean) {
         val a = idle
         if (a != null && now - idleStart >= a.durationMs) idle = null
-        if (idle != null || walking || stayStill || !showScene) return
+        if (idle != null || walking || stayStill || !showScene || now < hatchUntil) return
         val slot = now / IDLE_SLOT_MS
         if (slot == idleSlot) return
         idleSlot = slot
@@ -289,7 +328,8 @@ class PetView(context: Context) : View(context) {
         Voice.idle(stage, act)?.let { say(it, if (act == Idle.MUTTER) 4_500L else max(act.durationMs, 1_800L)) }
     }
 
-    private fun growOf(st: GrowthStage) = when (st) { GrowthStage.EGG -> EGG_GROW; GrowthStage.INFANT -> 0.68f; GrowthStage.REBEL -> 0.85f; GrowthStage.ADULT -> 0.98f }
+    // the designer's sheets already draw the baby and the rebel smaller than the grown bear; this only evens them out
+    private fun growOf(st: GrowthStage) = when (st) { GrowthStage.EGG -> EGG_GROW; GrowthStage.INFANT -> 0.88f; GrowthStage.REBEL -> 0.87f; GrowthStage.ADULT -> 0.9f }
 
     /**
      * Where the top of the pet's head is on the screen (the first-run bubble sits right above it).
@@ -301,14 +341,12 @@ class PetView(context: Context) : View(context) {
         if (w != vw || h != vh) layoutRoom(w, h)   // the room's geometry may not have been laid out yet
         val p = floorPoint(0f, 0.5f)
         val bw = min(vw, vh) * 0.19f * p.third * growOf(stage)
-        val bodyH = (if (stage == GrowthStage.EGG) 2.45f else 2f) * PetPainter.K
-        return p.second - bodyH * bw
+        return p.second - (PetPainter.height(stage) + (if (Slot.HAT in outfit) 0.4f else 0f)) * bw   // a hat stands a little higher than the ears
     }
 
-    // ---- the egg's nest of straw and its sleep
+    // ---- the egg's nest of straw
     private val strawPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
     private val nestFill = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val zPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Look.display(context); textAlign = Paint.Align.CENTER }
 
     private fun straw(c: Int) = if (Night.isDark(context)) Color.rgb((Color.red(c) * 0.5f).toInt(), (Color.green(c) * 0.46f).toInt(), (Color.blue(c) * 0.5f).toInt()) else c
 
@@ -355,19 +393,12 @@ class PetView(context: Context) : View(context) {
         }
     }
 
-    /** "z Z Z" drifting up from the sleeping egg */
-    private fun drawZzz(cv: Canvas, p: Place, bw: Float, now: Long) {
-        val night = Night.isDark(context)
-        val cycle = 3600L
-        for (k in 0 until 3) {
-            val ph = ((now % cycle) / cycle.toFloat() + k / 3f) % 1f
-            val a = sin(ph * PI.toFloat())
-            val x = p.x + bw * (0.8f + 0.55f * ph); val y = p.ground - bw * (1.75f + 0.95f * ph)
-            zPaint.textSize = bw * (0.24f + 0.2f * ph)
-            zPaint.color = if (night) 0xFFC9D6FF.toInt() else Look.PERI_DEEP
-            zPaint.alpha = (a * 235f).toInt().coerceIn(0, 255)
-            cv.drawText(if (k == 1) "Z" else "z", x, y, zPaint)
-        }
+    /** the low fuel / battery mark, breathing a little so it is noticed */
+    private fun drawEnergy(cv: Canvas, cx: Float, cy: Float, r: Float, now: Long) {
+        val k = 1f + 0.07f * sin(now / 260f)
+        cv.save(); cv.scale(k, k, cx, cy)
+        Pics.energy(cv, ink, cx, cy, r, energyBadge == 2)
+        cv.restore()
     }
 
     /** the thing the small pet has just fetched, held up as a sticker */
@@ -381,7 +412,7 @@ class PetView(context: Context) : View(context) {
         val t = phase * 2 * PI.toFloat()
         // the size follows the growth stage
         val grow = growOf(stage)
-        val bw = unit * grow; val bh = unit * 0.833f * grow
+        val bw = unit * grow; val bh = bw * PetPainter.height(stage) * 0.45f   // bh: about half the pet's height, the measure of its motions
         val back = p.back
 
         // motion: a real step (alternate feet, a bob and a waddle) while walking; otherwise the mood's idle motion
@@ -389,8 +420,11 @@ class PetView(context: Context) : View(context) {
         var stepT = 0f
         when {
             now < pokeUntil && showScene -> { val k = (pokeUntil - now) / 800f; tilt += sin(k * 16f) * 6f * k; sx = 1f + 0.05f * k; sy = 1f - 0.05f * k }   // a wiggle when touched
-            p.walking && stage == GrowthStage.INFANT -> {
-                // a baby does not walk yet: it bounces along, squashing a little each time it lands
+            (stage == GrowthStage.INFANT && (p.walking || (showScene && now < hatchUntil))) ||
+                (stage == GrowthStage.EGG && eggAwake && showScene && !stayStill && (now < hatchUntil || now % EGG_HOP_EVERY_MS < 2 * HOP_MS)) -> {
+                // the egg with its face out cannot sit still: every few seconds it hops twice in its nest.
+                // a baby does not walk yet: just out of the egg (and riding along in the car) it bounces on the spot,
+                // squashing a little each time it lands
                 val k = (now % HOP_MS) / HOP_MS.toFloat()
                 val up = sin(k * PI.toFloat())
                 dy = -up * bh * 0.32f
@@ -401,7 +435,7 @@ class PetView(context: Context) : View(context) {
                 stepT = (now % STEP_MS) / STEP_MS.toFloat() * 2f * PI.toFloat()
                 dx = sin(stepT) * bw * 0.02f; tilt += sin(stepT) * 1.6f   // a plodding walk: the feet take turns, the body does not bob or hop
             }
-            idle == Idle.WOBBLE && showScene -> {   // a dream: the egg rocks in its nest for a moment
+            idle == Idle.WOBBLE && showScene && !(stage == GrowthStage.EGG && eggAwake) -> {   // a dream: the egg rocks in its nest for a moment
                 val k = idleProgress(now); val b = sin(t)
                 tilt += sin(k * 6f * PI.toFloat()) * 4.5f * (1f - k); sy = 1f + b * 0.018f; sx = 1f - b * 0.012f
             }
@@ -419,25 +453,27 @@ class PetView(context: Context) : View(context) {
         val cx = p.x + dx
         // a soft shadow on the floor
         val air = if (dy < 0f) 1f + dy / (bh * 0.32f) * 0.35f else 1f   // the shadow shrinks while the baby is up in the air
-        if (!(stage == GrowthStage.EGG && showScene)) { cv.save(); cv.translate(cx, p.ground); cv.scale(bw * 1.05f * air, bw * 1.05f * 0.16f * air); cv.drawCircle(0f, 0f, 1f, shadowPaint); cv.restore() }
+        val shadow = bw * (if (stage == GrowthStage.EGG) 1.05f else if (stage == GrowthStage.INFANT) 0.95f else 0.78f)   // the grown bear stands on small feet
+        if (!(stage == GrowthStage.EGG && showScene)) { cv.save(); cv.translate(cx, p.ground); cv.scale(shadow * air, shadow * 0.17f * air); cv.drawCircle(0f, 0f, 1f, shadowPaint); cv.restore() }
 
         cv.save()
         cv.translate(cx, p.ground + dy)
         cv.scale(sx, sy)
         if (tilt != 0f) cv.rotate(tilt)
         cv.scale(bw, bw)   // from here on: body units (see PetPainter)
-        val ow = max(1.6f * d / bw, 0.058f)
+        val ow = max(1.6f * d / bw, 0.047f)   // the designer's line: 5 of the 512 art pixels
+        painter.eggAwake = eggAwake
         painter.yawn = if (idle == Idle.YAWN && showScene) idleK(now) else 0f
         painter.draw(cv, state, stage, outfit, back, p.walking && stage != GrowthStage.INFANT, stepT, ow, now, sticker = !showScene)
         cv.restore()
-        drawBurst(cv, cx, p.ground - bh * 1.2f, bw * 3.2f)
+        drawBurst(cv, cx, p.ground - bw * PetPainter.height(stage) * 0.55f, bw * 3.4f)
     }
 
     /**
      * The bubble sits beside the pet's head (on the right when there is room, otherwise on the left), with a small tail
      * pointing at it, and moves with the pet. It stays below the top bar and inside the screen.
      */
-    private fun drawBubble(cv: Canvas, px: Float, ground: Float, bw: Float, bh: Float, now: Long) {
+    private fun drawBubble(cv: Canvas, px: Float, headY: Float, bw: Float, now: Long) {
         val text = bubbleText ?: return
         val left = bubbleUntil - now
         if (left <= 0) { bubbleText = null; return }
@@ -451,7 +487,6 @@ class PetView(context: Context) : View(context) {
         val padX = size * 0.85f; val padY = size * 0.62f
         val wBubble = tw + padX * 2; val hBubble = size + padY * 2
         val tail = size * 0.8f
-        val headY = ground - bh * 1.5f
         val midY = headY.coerceIn(vh * 0.2f + hBubble / 2f, vh * 0.8f)
 
         val onRight = px + bw + tail + wBubble <= vw * 0.97f
@@ -516,7 +551,9 @@ class PetView(context: Context) : View(context) {
         const val WALK_SPEED = 0.22f     // floor units per second (a slow walk)
         const val DEPTH_COST = 1.4f      // walking into the depth of the room counts for more than sideways
         const val STEP_MS = 1_150L       // one full step cycle (both feet)
-        const val EGG_GROW = 0.8f        // the egg's size factor
+        const val EGG_GROW = 0.68f       // the egg's size factor
+        const val EGG_HOP_EVERY_MS = 4_160L   // the awake egg hops twice, then rests (8 hop lengths in all)
+        const val HATCH_MS = 5_200L      // how long the baby bounces right after hatching (ten hops)
         const val IDLE_SLOT_MS = 9_000L  // how often the pet may start an idle moment
     }
 }
