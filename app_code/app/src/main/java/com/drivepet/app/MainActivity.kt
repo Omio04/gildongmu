@@ -397,6 +397,7 @@ class MainActivity : AppCompatActivity() {
     private fun setDrawer(open: Boolean) {
         drawerOpen = open
         pet.coveredRight = 0f   // the pet stays where it is: the card slides over the room and no longer pushes the pet aside
+        pet.bubbleCover = if (open && pet.width > 0) (drawerW + drawerMargin).toFloat() / pet.width else 0f   // but its speech bubble stays clear of the card
         drawer.animate().translationX(if (open) 0f else (drawerW + drawerMargin).toFloat()).setDuration(220).start()
         if (open) scrim.visibility = View.VISIBLE
         scrim.animate().alpha(if (open) 1f else 0f).setDuration(220).withEndAction { if (!drawerOpen) scrim.visibility = View.GONE }.start()

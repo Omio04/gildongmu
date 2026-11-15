@@ -86,6 +86,9 @@ class PetView(context: Context) : View(context) {
      */
     var coveredRight: Float = 0f
         set(v) { field = v.coerceIn(0f, 0.8f); invalidate() }
+    /** how much of the room's right side the menu card covers (0..1 of the width): only the speech bubble keeps clear of it, the pet itself stays put */
+    var bubbleCover: Float = 0f
+        set(v) { field = v.coerceIn(0f, 0.8f); invalidate() }
     private var coverK = 0f          // 0..1, eased towards "covered" so the pet slides aside instead of jumping
     private var coverF = 1f          // how far the floor's width is squeezed to the left when fully covered
     private var lastFrame = 0L
@@ -486,7 +489,7 @@ class PetView(context: Context) : View(context) {
         // for both sides, and then it covered the pet's face. So: use the side with more room; if the text does not fit there
         // in one line, break it into two; if it still does not fit, make the letters smaller.
         // the menu card slides over the right part of the room: the bubble must stay left of it (it was cut off by the shop card)
-        val rightLimit = min(vw * 0.97f, vw * (1f - coveredRight) - vw * 0.02f)
+        val rightLimit = min(vw * 0.97f, vw * (1f - max(coveredRight, bubbleCover)) - vw * 0.02f)
         val rightRoom = rightLimit - (px + bw + tail)
         val leftRoom = (px - bw - tail) - vw * 0.02f
         val room = max(rightRoom, leftRoom)
