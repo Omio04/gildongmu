@@ -21,10 +21,10 @@ class DrivingScoreCard(context: Context) : LinearLayout(context) {
     }
     fun render(summary: ScoreSummary, demo: Boolean, official: OfficialDrivingScore?) {
         removeAllViews()
-        addView(label(if (demo) "시연 데이터 · 운전펫 추정 점수" else "운전펫 추정 점수 · 최근 90일", 23f, Look.PERI_DEEP, true))
+        addView(label(if (demo) "시연 데이터 · 길동무 추정 점수" else "길동무 추정 점수 · 최근 90일", 23f, Look.PERI_DEEP, true))
         addView(LinearLayout(context).apply {
             orientation = HORIZONTAL
-            addView(ScoreRing(context).apply { score = summary.score; contentDescription = summary.score?.let { "운전펫 추정 $it 점" } ?: "측정 중, 점수 없음" }, LayoutParams(dp(112), dp(112)))
+            addView(ScoreRing(context).apply { score = summary.score; contentDescription = summary.score?.let { "길동무 추정 $it 점" } ?: "측정 중, 점수 없음" }, LayoutParams(dp(112), dp(112)))
             addView(LinearLayout(context).apply {
                 orientation = VERTICAL
                 setPadding(dp(18), dp(12), 0, 0)

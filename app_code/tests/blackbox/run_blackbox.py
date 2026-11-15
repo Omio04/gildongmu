@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Black-box tests for 운전펫 (DrivePet) on the Pleos Connect emulator.
+Black-box tests for 길동무 (DrivePet) on the Pleos Connect emulator.
 
 "Black box" means the test knows nothing about the code. It only does what a driver or the car would do and looks at what
 the app does in return:

@@ -135,11 +135,11 @@ class PetService : Service() {
 
     private fun startAsForeground() {
         val nm = getSystemService(NotificationManager::class.java)
-        nm.createNotificationChannel(NotificationChannel("pet", "운전펫", NotificationManager.IMPORTANCE_LOW))
+        nm.createNotificationChannel(NotificationChannel("pet", "길동무", NotificationManager.IMPORTANCE_LOW))
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         val b = Notification.Builder(this, "pet")
             .setSmallIcon(R.drawable.ic_stat_pet).setColor(Look.HONEY)
-            .setContentTitle("운전펫이 함께 달리는 중")
+            .setContentTitle("길동무가 함께 달리는 중")
             .setContentText("눌러서 펫 화면 열기")
             .setContentIntent(open)
             .setOngoing(true)

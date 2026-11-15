@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Screen tour: opens every screen of 운전펫 on the emulator, saves a screenshot of each, and checks the layout from the
+Screen tour: opens every screen of 길동무 on the emulator, saves a screenshot of each, and checks the layout from the
 accessibility tree (what a driver would see go wrong):
   * text that sticks out of the screen
   * two texts drawn on top of each other

@@ -212,12 +212,12 @@ class MainActivity : AppCompatActivity() {
     private fun notifyNeedPark() {
         val nm = getSystemService(NotificationManager::class.java)
         // no heads-up pop-up (IMPORTANCE_LOW): Pleos does not allow one that is unrelated to driving
-        nm.createNotificationChannel(NotificationChannel("start", "운전펫 시작 안내", NotificationManager.IMPORTANCE_LOW))
+        nm.createNotificationChannel(NotificationChannel("start", "길동무 시작 안내", NotificationManager.IMPORTANCE_LOW))
         val n = Notification.Builder(this, "start")
             .setSmallIcon(R.drawable.ic_stat_pet)
             .setColor(Look.HONEY)
-            .setContentTitle("운전펫을 시작하려면 주차해 주세요")
-            .setContentText("P단에 넣으면 운전펫이 자동으로 열려요.")
+            .setContentTitle("길동무를 시작하려면 주차해 주세요")
+            .setContentText("P단에 넣으면 길동무가 자동으로 열려요.")
             .setAutoCancel(true)
             .build()
         nm.notify(2, n)
@@ -227,7 +227,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun obLine(): String = when (obStep) {
         0 -> "안녕! 나는 앞으로 너의 길동무가 되어줄 친구야."
-        1 -> "운전 습관을 함께 기록하고 포인트로 나를 꾸며 줘. 운전펫 추정 점수도 확인할 수 있어."
+        1 -> "운전 습관을 함께 기록하고 포인트로 나를 꾸며 줘. 길동무 추정 점수도 확인할 수 있어."
         2 -> "그 포인트로 상점에서 옷이랑 방 소품을 사서 나를 꾸며 줄 수 있어."
         3 -> if (obName == null) "그런데 나는 아직 이름이 없어. 내 이름을 지어줄래?" else "‘${obName}’ 어때? 마음에 들면 아래 버튼을 눌러 줘."
         else -> "${obName}! 마음에 쏙 들어. 이제부터 같이 달려 보자!"

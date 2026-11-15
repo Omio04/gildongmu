@@ -1,47 +1,68 @@
-# 운전펫 (DrivePet)
+# 길동무
 
-차량 신호에 반응하는 펫과 운전 습관 기록을 연결하는 Pleos 차량용 앱입니다. 향후 현대자동차 블루링크 공식 운전점수와 연계하는 방향으로 개발합니다.
+팀명: **동무들** (팀 참가)
 
-## 현재 프로젝트
-- `app_code/`: 현재 안드로이드 프로젝트. Android Studio에서는 이 폴더를 여세요.
-- `apk/drivepet-debug.apk`: 현재 소스로 빌드한 최신 개발용 설치 파일.
-- `screenshots/`: 현재 캐릭터 적용 이후 화면. 기존 캡처는 각 촬영 시점의 기능을 보여주며 최신 점수 화면은 별도로 확인합니다.
-- `design/character/`, `design/regions/`: 현재 캐릭터와 낮/밤 지역 그림 원본 및 생성 도구.
-- `DRIVING_RECORD.md`: 기존 깜빡이 기록·배지와 새 추정 점수의 구분.
-- `docs/DRIVING_SCORE.md`: 점수 산식, 데이터 품질 기준, 현대차 연계 계획.
+차량 신호에 반응하는 펫을 키우며 운전 습관(깜빡이 사용·급가속/급감속)을 기록하는 Pleos 차량용 앱입니다.
+
+## 구성
+| 위치 | 내용 |
+|---|---|
+| `app_code/` | 안드로이드 프로젝트 소스 (Kotlin, 패키지 `com.drivepet.app`). Android Studio에서는 이 폴더를 여세요. |
+| `apk/동무들_길동무_release.apk` | 제출용 release APK (versionName 0.1, 위 소스에서 빌드) |
+| `design/regions/tools/make_islands.py` | 지역 섬 그림 생성 스크립트(참고용, 앱 빌드와 무관) |
 
 ## 구현된 기능
-- 차량 기어·깜빡이·핸들·브레이크·주행거리·배터리/연료·벨트·와이퍼에 반응하는 펫.
-- 거리별 성장, 옷·가구, 미션, 미니게임, 17개 지역 지도 도감.
-- 주차(P) 상태에서 앱 화면을 열고, 다른 기어에서는 앱 화면을 닫는 처리.
-- 날짜별 깜빡이 습관 기록과 배지. 기존 기록·보상은 유지합니다.
-- **운전펫 추정 점수 v1**: GPS 속도로 급가속·급감속·급출발과 심야주행을 집계하고 최근 90일 점수를 표시합니다. 측정 10km·10분·수신율 80%를 충족하지 못하면 점수를 표시하지 않습니다.
-- 실제 점수와 분리된 개발용 시연 화면. 시연 기록은 저장하거나 보상에 반영하지 않습니다.
+- 차량 기어·깜빡이·핸들·브레이크·주행거리·배터리/연료·안전벨트·와이퍼에 반응하는 펫.
+- 거리별 성장, 옷·가구, 미션, 미니게임, 17개 지역 지도 도감(길 안내 중 현재 지역의 물건 줍기).
+- 주차(P) 상태에서 앱 화면을 열고, 다른 기어에서는 화면을 닫은 뒤 내비 위에 작은 펫을 띄움.
+- 날짜별 깜빡이 사용 기록, 배지·보상, 길동무 추정 점수(GPS 속도 기반 급가속·급감속·급출발·심야주행, 최근 90일).
+- 사용 Pleos SDK: Vehicle SDK(차량 신호), NaviHelper SDK(길 안내·위치).
 
-## 점수의 출처
-블루링크의 공개 평가 항목을 참고했지만 계산식·임계값·가중치는 운전펫 자체 실험 기준입니다. **블루링크 공식 점수와 같지 않으며 실차 검증 전입니다.** 깜빡이 점수, 게임 포인트와도 별개입니다.
+## 실행 방법
+1. Pleos 공식 가이드(<https://appdevchallenge.auto-hmg.io>)대로 Pleos Connect 에뮬레이터를 설치하고 실행합니다. 에뮬레이터는 **Cold boot**로 켜야 합니다(Quick boot에서는 차량 신호(VHAL)를 쓸 수 없습니다).
+2. 에뮬레이터를 켠 뒤 APK를 설치합니다. 이 에뮬레이터는 앱을 **사용자 10번**으로 실행합니다.
+   ```bash
+   adb install -r --user 10 apk/동무들_길동무_release.apk
+   adb shell pm grant --user 10 com.drivepet.app android.permission.ACCESS_FINE_LOCATION
+   adb shell pm grant --user 10 com.drivepet.app android.permission.POST_NOTIFICATIONS
+   adb shell appops set --user 10 com.drivepet.app SYSTEM_ALERT_WINDOW allow   # 내비 위 작은 펫
+   adb shell am start --user 10 -n com.drivepet.app/.MainActivity
+   ```
+3. 앱 화면은 기어가 **P(주차)**일 때만 열립니다. 에뮬레이터의 Virtual Console(`adb forward tcp:8088 tcp:8088` 후 브라우저에서 `http://127.0.0.1:8088/`)로 차량 신호를 바꿉니다. 아래 명령으로도 바꿀 수 있습니다.
+   ```bash
+   curl -X PUT "http://127.0.0.1:8088/vehicle/gear?gear=Drive"
+   curl -X PUT "http://127.0.0.1:8088/vehicle/controls?speed=30&accelerator=30&brake=0&steering=0"
+   ```
+4. 지도 도감은 내비(NaviHelper) 위치를 씁니다. 에뮬레이터 위치는 `adb emu geo fix 127.1386 37.4467`(성남)처럼 설정하고 내비 앱을 먼저 켭니다.
 
-현대차 공식 운전습관 API는 안내돼 있으나 이 앱의 사용 권한·실제 점수 조회 규격은 아직 확보하지 않았습니다. 공식 점수 연결 인터페이스를 분리했고 현재 제공자는 항상 미연동을 반환합니다. 네트워크 연동이나 현대차 계정 로그인은 구현하지 않았습니다.
+## 테스트 환경
+- **에뮬레이터: Pleos Connect v2.1.0** (Android 14, API 34, `pleos_car_emulator`)
+- **화면 규격: 2560×1440 (가로)** — 에뮬레이터 원래 해상도 그대로 사용.
+- 앱 설정: minSdk 28, targetSdk 34, compileSdk 37, Kotlin, Gradle 9.6.0.
+- Pleos 라이브러리 저장소 `https://nexus-playground.pleos.ai/repository/maven-releases/`는 `app_code/settings.gradle.kts`에 들어 있습니다.
 
 ## 빌드·테스트
 PowerShell에서:
 ```powershell
 cd app_code
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio\jbr'
-.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug --offline --console=plain
+.\gradlew.bat :app:testDebugUnitTest :app:assembleRelease --no-configuration-cache
 ```
-`local.properties`에 Android SDK 경로가 필요합니다. 처음 의존성을 받는 환경에서는 `--offline`을 빼세요.
+- `app_code/local.properties`에 Android SDK 경로(`sdk.dir=...`)가 필요합니다.
+- release 빌드는 lint 도구를 내려받으므로 처음에는 `--offline` 없이 실행하세요.
+- 결과: `app_code/app/build/outputs/apk/release/app-release.apk` → `apk/`에 복사해 제출.
 
-빌드 결과: `app_code/app/build/outputs/apk/debug/app-debug.apk`. 개발용 배포 복사본: `apk/drivepet-debug.apk`.
+## APK 위치
+`apk/동무들_길동무_release.apk` (프로토타입 빌드: 디버그 키로 서명되어 에뮬레이터에 그대로 설치됩니다.)
 
-## 확인 범위와 한계
-- 최신 소스 빌드와 JVM 테스트를 확인합니다. 실차 센서 정확도·점수 타당성·안전운전 개선 효과는 검증 전입니다.
-- GPS 속도 정확도가 제공되지 않거나 위치 권한이 없으면 추정 점수가 나오지 않습니다. 가상 위치·데모 주행은 실제 점수에 넣지 않습니다.
-- 내비 위 펫은 `SYSTEM_ALERT_WINDOW`에 의존합니다. 실제 Pleos App Market 배포 허용 여부는 미확인입니다.
-- 주행 중 애니메이션·알림의 시선 분산 여부, 실차별 신호 지원 범위도 검증이 필요합니다.
-- 현재 APK는 디버그 빌드이며 제출·배포용 서명 검증은 별도입니다.
+## 이미지·글꼴·오픈소스
+- **캐릭터와 앱 화면 그림:** 팀의 디자인 담당이 직접 제작했습니다.
+- **지역 지도(섬) 그림:** AI 이미지 생성 도구를 이용해 제작했습니다.
+- **글꼴:** Jua (SIL Open Font License 1.1). 라이선스 전문은 `app_code/app/src/main/assets/licenses/Jua-OFL.txt`에 있습니다.
+- **라이브러리:** AndroidX(appcompat, core-ktx)와 Material Components는 Apache License 2.0입니다. Pleos SDK(Vehicle, NaviHelper)는 Pleos Playground가 제공하는 것을 사용합니다.
 
-## 공식 참고 자료
-- [공모전 심사 기준](https://appdevchallenge.auto-hmg.io/guide/judging-awards#criteria): 차량특화성·창의성·기술 활용성·사업성. 세부 배점은 비공개.
-- [현대차 데이터 API 소개](https://developers.hyundai.com/web/v1/hyundai/data_api): 최근 90일 운전습관 점수 제공 안내.
-- [현대차 연동 절차](https://developers.hyundai.com/web/v1/hyundai/faqs): 개발 프로젝트·테스트·상용화 심사.
+## 한계와 주의
+- 점수는 길동무 자체 실험 기준이며 **현대차 블루링크 공식 점수와 다릅니다.** 현대차 계정·공식 점수 API 연동은 구현하지 않았습니다.
+- 실차 센서 정확도, 점수 타당성, 주행 중 화면·알림의 시선 분산 여부는 검증 전입니다.
+- 내비 위 작은 펫은 `SYSTEM_ALERT_WINDOW` 권한에 의존하며 실제 Pleos App Market 배포 허용 여부는 확인하지 못했습니다.
+- 위치 권한이 없거나 GPS 속도 정확도가 없으면 추정 점수가 나오지 않습니다. 시연용 가상 주행은 실제 점수에 반영되지 않습니다.
