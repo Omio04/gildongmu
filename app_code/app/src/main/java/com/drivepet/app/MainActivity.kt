@@ -816,6 +816,9 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(20), dp(14), dp(24), dp(16))
             background = kit.card(26f, 0xF5FFF9F1.toInt())
             kit.lift(this, 4f)
+            // tapping the level card opens the pet's info page (growth, today's km, driving record summary)
+            contentDescription = "캐릭터 정보 열기"
+            setOnClickListener { showPage(Page.INFO); setDrawer(true) }
             addView(hudLevel)
             addView(hudXp, LinearLayout.LayoutParams(dp(250), dp(13)).apply { topMargin = dp(10) })
             addView(hudKm, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(9) })
@@ -829,6 +832,9 @@ class MainActivity : AppCompatActivity() {
             setCompoundDrawablesRelative(Glyphs.coin(this@MainActivity, 36f), null, null, null); compoundDrawablePadding = dp(8)
             background = kit.card(100f, 0xF5FFF9F1.toInt())
             kit.lift(this, 4f)
+            // tapping the points opens the shop, where the points are spent
+            contentDescription = "상점 열기"
+            setOnClickListener { showPage(Page.SHOP); setDrawer(true) }
         }
         val menuBtn = TextView(this).apply {
             text = "메뉴"
