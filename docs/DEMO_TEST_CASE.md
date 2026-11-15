@@ -21,8 +21,11 @@ adb shell pm clear --user 10 $PKG                                        # 처�
 adb shell pm grant --user 10 $PKG android.permission.ACCESS_FINE_LOCATION
 adb shell pm grant --user 10 $PKG android.permission.POST_NOTIFICATIONS
 adb shell appops set --user 10 $PKG SYSTEM_ALERT_WINDOW allow             # 내비 위 작은 펫 (에뮬레이터는 adb로만 켤 수 있음)
+adb emu geo fix 127.1386 37.4467                                          # 에뮬레이터 위치를 성남으로 (처음부터 부팅하면 미국 좌표로 잡힘)
+adb shell am start --user 10 -n ai.umos.maps.android.navigation.app/.MainActivity   # 내비 앱 켜기 (꺼져 있을 수 있음)
 vc "/vehicle/gear?gear=Park"
 ```
+내비 지도가 화면에 뜨고 현재 위치(성남)가 보일 때까지 기다린 뒤 촬영을 시작합니다.
 앱이 차량 권한 창을 띄우면 모두 허용합니다.
 
 ## 1. 처음 실행: 소개와 이름 정하기
@@ -116,7 +119,7 @@ vc "/vehicle/gear?gear=Park"
 ## 13. NaviHelper 위치 확인 (`feature/with-navihelper` 브랜치만)
 | 할 일 | 보여야 할 것 | 기능 |
 |---|---|---|
-| 앱 실행 후 `adb logcat -s DrivePet` | `navi position` 로그와 지역 이름 | 지역 판별이 NaviHelper 현재 위치로 동작 |
+| 앱 실행 후 `adb logcat -s DrivePet` | `navi connected` 다음에 `navi position: region gyeonggi` 로그 | 지역 판별이 NaviHelper 현재 위치로 동작 |
 | 지도 도감 | 지금 있는 지역(에뮬레이터 기본 위치: 경기도 성남)이 표시됨 | |
 
 ## 촬영 체크리스트
@@ -138,7 +141,8 @@ vc "/vehicle/gear?gear=Park"
 | 14 | NaviHelper 위치 (with 브랜치) | 13 | ☐ |
 
 ## 알려진 주의점
-- 화면 없이(`-no-window`) 띄운 에뮬레이터에서는 내비 지도가 "실행이 지연되고 있습니다"에서 멈춘 적이 있습니다. 창 모드로 촬영하세요.
+- 화면 없이(`-no-window`) 띄운 에뮬레이터에서는 내비 지도가 "실행이 지연되고 있습니다"에서 멈추고, NaviHelper 요청에 `navi not ready`로만 답했습니다(2026-11-15 확인). 창 모드로 촬영하세요.
+- 에뮬레이터를 처음부터 부팅하면 내비 앱이 꺼져 있고 GPS가 미국 좌표로 잡힙니다. 준비 단계의 `geo fix`와 내비 실행을 빼먹으면 지도 도감과 길 안내 장면이 나오지 않습니다.
 - 내비 위 작은 펫은 `SYSTEM_ALERT_WINDOW`를 adb로 켜야 에뮬레이터에 뜹니다.
 - 시연 명령(`demo …`)은 디버그 빌드에서만 동작합니다.
 - 실험용 운전 점수는 GPS 속도가 필요해서, 에뮬레이터에서는 `score_demo` 예시 화면으로 보여 줍니다.
