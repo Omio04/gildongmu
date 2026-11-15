@@ -40,6 +40,7 @@ import androidx.appcompat.app.AppCompatActivity
  * The look (cream cards, periwinkle keys, the rounded display face) comes from [Look] / [Kit].
  */
 class MainActivity : AppCompatActivity() {
+
     private val ui = Handler(Looper.getMainLooper())
     private val engine get() = PetHub.engine
     private val kit by lazy { Kit(this) }
@@ -108,6 +109,8 @@ class MainActivity : AppCompatActivity() {
 
     private companion object {
         const val REQ_LOCATION = 41
+        /** the "draw over other apps" hint was already said in this run (it must not repeat when the screen is re-created) */
+        var overlayHintShown = false
     }
 
     private enum class Page(val label: String) { MENU("메뉴"), INFO("캐릭터 정보"), MISSION("미션"), SHOP("상점"), INVENTORY("인벤토리"), SETTINGS("설정"), DEV("개발자") }
@@ -144,6 +147,14 @@ class MainActivity : AppCompatActivity() {
         setContentView(buildUi())
         showPage(Page.MENU)
         if (!PetHub.onboarded) startOnboarding() else Voice.event(stageNow, Ev.GREET, fallback = "왔어? 보고 싶었어!")?.let { say(it) }
+        // The small pet over the navigation needs "draw over other apps". Without it the pet is just missing while driving, and
+        // the only explanation was in the settings page. Say so once per run, after the greeting.
+        if (PetHub.onboarded && !overlayHintShown && !Settings.canDrawOverlays(this)) {
+            overlayHintShown = true
+            ui.postDelayed({
+                if (!Settings.canDrawOverlays(this)) say("달리는 동안 작은 펫을 보려면 설정에서 '다른 앱 위에 표시'를 허용해 줘")
+            }, 6_000)
+        }
         refresh()
     }
 

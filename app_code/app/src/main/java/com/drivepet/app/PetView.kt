@@ -481,15 +481,33 @@ class PetView(context: Context) : View(context) {
 
         var size = vh * 0.043f
         textPaint.textSize = size
-        var tw = textPaint.measureText(text)
-        val maxW = vw * 0.5f
-        if (tw > maxW) { size *= maxW / tw; textPaint.textSize = size; tw = maxW }
-        val padX = size * 0.85f; val padY = size * 0.62f
-        val wBubble = tw + padX * 2; val hBubble = size + padY * 2
         val tail = size * 0.8f
+        // The bubble must fit beside the pet, never on it. It used to be pushed against the screen edge when it was too wide
+        // for both sides, and then it covered the pet's face. So: use the side with more room; if the text does not fit there
+        // in one line, break it into two; if it still does not fit, make the letters smaller.
+        // the menu card slides over the right part of the room: the bubble must stay left of it (it was cut off by the shop card)
+        val rightLimit = min(vw * 0.97f, vw * (1f - coveredRight) - vw * 0.02f)
+        val rightRoom = rightLimit - (px + bw + tail)
+        val leftRoom = (px - bw - tail) - vw * 0.02f
+        val room = max(rightRoom, leftRoom)
+        val padFactor = 1.7f                                           // the two paddings together, in letter sizes
+        val cap = min(room, vw * 0.5f + size * padFactor)
+        var lines = listOf(text)
+        var tw = textPaint.measureText(text)
+        if (tw + size * padFactor > cap) {
+            lines = splitInTwo(text)
+            tw = lines.maxOf { textPaint.measureText(it) }
+        }
+        if (tw + size * padFactor > cap) {
+            val s = (cap / (tw + size * padFactor)).coerceAtLeast(0.3f)
+            size *= s; textPaint.textSize = size; tw *= s
+        }
+        val padX = size * 0.85f; val padY = size * 0.62f
+        val lineH = size * 1.2f
+        val wBubble = tw + padX * 2; val hBubble = size + (lines.size - 1) * lineH + padY * 2
         val midY = headY.coerceIn(vh * 0.2f + hBubble / 2f, vh * 0.8f)
 
-        val onRight = px + bw + tail + wBubble <= vw * 0.97f
+        val onRight = px + bw + tail + wBubble <= rightLimit
         val x0 = if (onRight) px + bw + tail else (px - bw - tail - wBubble).coerceAtLeast(vw * 0.02f)
         val top = midY - hBubble / 2f
         val tipX = if (onRight) x0 - tail else x0 + wBubble + tail
@@ -500,8 +518,18 @@ class PetView(context: Context) : View(context) {
         ink.fill.color = Color.argb(alpha, 255, 253, 248); cv.drawPath(bubblePath, ink.fill)
         ink.line.color = Look.alpha(Look.COCOA, alpha / 255f); ink.line.strokeWidth = 2f * d; cv.drawPath(bubblePath, ink.line)
         textPaint.alpha = alpha
-        cv.drawText(text, x0 + padX, top + padY + size * 0.82f, textPaint)
+        lines.forEachIndexed { i, line -> cv.drawText(line, x0 + padX, top + padY + size * 0.82f + i * lineH, textPaint) }
         postInvalidateOnAnimation()
+    }
+
+    /** the text in two lines of about the same length, broken at a " · " or a space near the middle (or in the middle) */
+    private fun splitInTwo(s: String): List<String> {
+        val mid = s.length / 2
+        val breaks = s.indices.filter { s[it] == ' ' }
+        val at = breaks.minByOrNull { kotlin.math.abs(it - mid) } ?: return listOf(s.substring(0, mid), s.substring(mid))
+        val first = s.substring(0, at).trim().trimEnd('·').trim()
+        val second = s.substring(at + 1).trim().trimStart('·').trim()
+        return if (first.isEmpty() || second.isEmpty()) listOf(s.substring(0, mid), s.substring(mid)) else listOf(first, second)
     }
 
     /** a pill-shaped bubble with its tail as one outline */

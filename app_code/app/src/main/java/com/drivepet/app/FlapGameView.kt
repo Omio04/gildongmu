@@ -204,11 +204,14 @@ class FlapGameView(context: Context, private val onExit: () -> Unit, private val
 
         when (g.phase) {
             FlapGame.Phase.READY -> {
-                card(cv, g.w / 2f - 240f, g.h * 0.29f, 480f, 92f, 26f, 0xF2FFFCF6.toInt())
+                // the card sits just above the car (it used to be at 29% of the height and hid the car's top and the bear's head)
+                val cardH = 92f
+                val cardY = (g.h / 2f + CAR_T - 14f - cardH).coerceAtLeast(70f)   // below the top bar, above the car
+                card(cv, g.w / 2f - 240f, cardY, 480f, cardH, 26f, 0xF2FFFCF6.toInt())
                 txt.textSize = 25f; txt.color = Look.INK
-                cv.drawText("화면을 톡 치면 차가 뛰어올라요", g.w / 2f, g.h * 0.29f + 40f, txt)
+                cv.drawText("화면을 톡 치면 차가 뛰어올라요", g.w / 2f, cardY + 40f, txt)
                 body.textSize = 14f; body.color = Look.SUB
-                cv.drawText("표지판과 건물을 피해 코인을 모으면 포인트가 돼요", g.w / 2f, g.h * 0.29f + 70f, body)
+                cv.drawText("표지판과 건물을 피해 코인을 모으면 포인트가 돼요", g.w / 2f, cardY + 70f, body)
             }
             FlapGame.Phase.OVER -> drawResult(cv, g)
             else -> {}

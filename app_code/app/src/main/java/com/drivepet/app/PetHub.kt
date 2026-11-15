@@ -131,7 +131,7 @@ object PetHub {
 
     private fun alertLowEnergy() {
         val what = energyPercent?.let { (if (usesBattery) "배터리 " else "연료 ") + "$it%" }
-        val far = rangeKm?.let { "앞으로 약 ${it}km" }
+        val far = rangeKm?.takeIf { it > 0 }?.let { "앞으로 약 ${it}km" }   // "약 0km" is not a useful thing to say
         alert(PetAlert(if (usesBattery) AlertIcon.BATTERY else AlertIcon.FUEL, "배가 고파요",
             listOfNotNull(what, far).joinToString(" · ").ifEmpty { if (usesBattery) "충전이 필요해요" else "주유가 필요해요" }, "배고파, 밥 줘"))
     }
@@ -169,8 +169,9 @@ object PetHub {
     fun demoCar(what: String, value: String?) {
         when (what) {
             "belt_on" -> onSeatBelt(true)
-            "belt_off" -> onSeatBelt(false)
-            "wiper_on" -> onWiper(true)
+            // the alert is for "buckled, then unbuckled": the emulator starts unbuckled, so without this the command did nothing
+            "belt_off" -> { beltAlertAt = 0L; if (beltOn == false) beltOn = true; onSeatBelt(false) }   // also skip the 30 s "don't nag" gap
+            "wiper_on" -> { rainAlertAt = 0L; if (wiperOn) onWiper(false); onWiper(true) }   // the rain alert too: show it every time
             "wiper_off" -> onWiper(false)
             "fuel" -> { batteryPercent = null; onEnergy(value?.toIntOrNull() ?: 50, null) }
             "battery" -> onEnergy(null, value?.toIntOrNull() ?: 50)
@@ -328,9 +329,12 @@ object PetHub {
     private fun onOdometer(v: Float) {
         val prev = lastOdometer
         lastOdometer = v
-        if (prev == null || demoDriving) return
+        if (prev == null || demoDriving) { android.util.Log.d("DrivePet", "odometer $v: first reading or demo, not counted"); return }
         val delta = v - prev
-        if (delta > 0f && delta < MAX_ODOMETER_STEP_KM) { engine.addDistance(delta); dexDrive(delta) }
+        if (delta > 0f && delta < MAX_ODOMETER_STEP_KM) {
+            android.util.Log.d("DrivePet", "odometer $v: +$delta km counted (driving=${engine.driving})")
+            engine.addDistance(delta); dexDrive(delta)
+        } else android.util.Log.d("DrivePet", "odometer $v: step $delta km ignored")
     }
 
     fun setAppVisible(v: Boolean) {
